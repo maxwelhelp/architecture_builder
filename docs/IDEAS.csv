@@ -1,0 +1,16 @@
+id,status,used_in,value,idea,expected_signal,notes
+I001,working,v11,high,4-phase causal matrix program,better layer specialization,extract->contrast->memory->aggregate worked logically
+I002,working,v11.1d,high,block/route/adapter diversity losses,lower block cosine,block cosine dropped strongly but accuracy slightly dipped
+I003,working,v11.2,high,late write repair,late layers write nonzero deltas,fixed pretty-but-not-writing layers
+I004,mixed,v12,high,SignalBus + RolePlanner,adaptive role mix by layer,roles worked but accuracy lower than v11
+I005,testing,v13,high,categorized primitives,structured role->category->primitive selection,should fix flat operator pile
+I006,planned,v13.1,high,gradient usefulness analyzer,attention vs actual loss usefulness,needed before adding more attention
+I007,planned,v13.2,high,route categories,route specialization,route diversity often stays high
+I008,planned,v13.3,medium,architecture memory ranking,soft priors from best runs,export exists; ranking not yet implemented
+I009,avoid,water,high,blockless all-to-all water,poor specialization,do not return for SpeechCommands
+I010,planned,v14,medium,growth/capacity planner,route/rank/block growth,only after v13 stable
+I011,planned,later,medium,nullspace/rank growth,capacity without forgetting,needs rank analyzer first
+I012,testing,v13,high,memory primitive variants,class_pair_memory/ema_memory,important for go/no/down
+I013,testing,v13,high,repair primitive variants,late_read_repair/class_pair_contrast,important for weak classes
+I014,mixed,v12,medium,weak-class late read,force weak classes to late blocks,moved go later but accuracy still limited
+I015,working,repo,high,gitignore data/runs,keep datasets safe,do not use git clean -fdx
