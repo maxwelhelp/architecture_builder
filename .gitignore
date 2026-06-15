@@ -1,0 +1,38 @@
+# Local datasets and heavy generated artifacts
+/data/
+data/
+**/data/
+/runs/
+runs/
+**/runs/
+/checkpoints/
+checkpoints/
+/artifacts/
+artifacts/
+/cache/
+.cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npy
+*.npz
+*.wav
+*.flac
+*.tar
+*.tar.gz
+*.zip
+*.log
+
+# Keep lightweight reports if copied intentionally
+!reports/**/*.json
+!reports/**/*.csv
+!reports/**/*.md
+
+# Local secrets
+.env
+.secrets/
+*.token
