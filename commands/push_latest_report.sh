@@ -17,10 +17,11 @@ if [[ -n "$heavy_staged" ]]; then
 fi
 
 # Stage only safe project/report files.
-git add reports docs README.md .gitignore commands tools old src || true
+git add reports docs README.md .gitignore commands tools old src skills || true
 
 if git diff --cached --quiet; then
-  echo "Nothing to commit."
+  echo "Nothing new to commit. Running git push anyway in case local commits are ahead."
+  git push
   exit 0
 fi
 
