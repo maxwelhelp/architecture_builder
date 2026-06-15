@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Default is a stable tiny BERT config with model_type present.
 # Override if needed:
-#   HF_DROPOUT_MODEL="hf-internal-testing/tiny-random-BertModel" bash commands/run_hf_matrix_dropin_probe_v1.sh
-MODEL_NAME="${HF_DROPOUT_MODEL:-google/bert_uncased_L-2_H-128_A-2}"
+#   HF_DROPIN_MODEL="hf-internal-testing/tiny-random-BertModel" bash commands/run_hf_matrix_dropin_probe_v1.sh
+MODEL_NAME="${HF_DROPIN_MODEL:-google/bert_uncased_L-2_H-128_A-2}"
 
 python experiments/hf_dropin/run_hf_matrix_dropin_probe.py \
   --model-name "$MODEL_NAME" \
