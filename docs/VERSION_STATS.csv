@@ -2,7 +2,7 @@ version,status,best_val_acc,epoch,main_change,main_result,next_action
 v9.7,baseline,57.15,15,tree/vectorized grid,good accuracy but energy/global shortcut,keep as baseline
 v10,archived,45.85,5,matrix attention backend,too much short_onset repetition,do not continue directly
 v11,best_accuracy_old,63.55,15,logical phase roles,best old accuracy and logical program,now beaten by v13 soft explore
-v11.1d,diagnostic,61.75,15,strong diversity diagnostics,block cosine improved but accuracy dipped,use diagnostics only
+v11.1d,diagnostic,61.75,15,strong diversity diagnostics,block cosine improved but accuracy slightly dipped,use diagnostics only
 v11.2,gate_repair,62.70,13,late write repair,late layers write real deltas,base for v12/v13 ideas
 v12,signal_bus,59.00,13,SignalBus + RolePlanner,roles worked but accuracy lower,keep concept but improve primitive structure
 v13,category_test,59.15,13,categorized primitives,very logical category program but accuracy still below v11/v11.2,next: exploration/exploitation phase schedule and softer category entropy/diversity
@@ -13,3 +13,4 @@ hf_matrix_dropin_probe_v1,testing,NA,NA,drop-in replacement for one hidden layer
 universal_matrix_program_v1,testing,NA,NA,universal task-adapter plus matrix core with auto-growth slots,active layers/blocks/primitives grow from health-map without manual insert,next run HF 45ep and inspect growth actions
 universal_matrix_program_v2_steps,diagnostic,NA,45,ordered step slots inside blocks,v2 proved add_step works but controller overfilled L1B0 and then depth/width; final block_cos 0.97543 delta_cos 0.93178 norm_cos 0.98851,next balanced growth with action memory and per-step traces
 universal_matrix_program_v2_1_balanced,testing,NA,NA,balanced step/depth/width/primitive growth with action memory and per-step logs,targets fewer blind step repeats and clearer primitive order per step,next run HF 45ep and compare against v2/v1/hf_dropin
+universal_matrix_program_v2_2_step_planner,testing,NA,NA,step-planner attention over all blocks/steps using head pressure gradients gates entropy cooldown and action reward,aims to choose add_step/depth/width/primitive/prune from global program health,next run HF 45ep and export pseudocode
