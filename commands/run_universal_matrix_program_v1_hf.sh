@@ -2,8 +2,26 @@
 set -euo pipefail
 
 MODEL_NAME="${UNIVERSAL_MODEL:-google/bert_uncased_L-2_H-128_A-2}"
+SCRIPT="experiments/universal_program/run_universal_matrix_program_v1.py"
+BACKUP="$(mktemp)"
+cp "$SCRIPT" "$BACKUP"
+restore_script() {
+  cp "$BACKUP" "$SCRIPT" || true
+  rm -f "$BACKUP" || true
+}
+trap restore_script EXIT
 
-python experiments/universal_program/run_universal_matrix_program_v1.py \
+# Runtime safety patch: candidate primitive mixing must use separate labels for
+# candidate index and batch index. Wrong: cb,bnod->bncd. Correct: co,bnod->bncd.
+python - <<'PY'
+from pathlib import Path
+p = Path("experiments/universal_program/run_universal_matrix_program_v1.py")
+s = p.read_text(encoding="utf-8")
+s = s.replace('torch.einsum("cb,bnod->bncd", mix, base)', 'torch.einsum("co,bnod->bncd", mix, base)')
+p.write_text(s, encoding="utf-8")
+PY
+
+python "$SCRIPT" \
   --model-name "$MODEL_NAME" \
   --layer-idx 0 \
   --device cuda \
