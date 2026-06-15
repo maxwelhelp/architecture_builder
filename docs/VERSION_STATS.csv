@@ -1,8 +1,9 @@
 version,status,best_val_acc,epoch,main_change,main_result,next_action
 v9.7,baseline,57.15,15,tree/vectorized grid,good accuracy but energy/global shortcut,keep as baseline
 v10,archived,45.85,5,matrix attention backend,too much short_onset repetition,do not continue directly
-v11,best_accuracy,63.55,15,logical phase roles,best old accuracy and logical program,compare against v13
+v11,best_accuracy_old,63.55,15,logical phase roles,best old accuracy and logical program,now beaten by v13 soft explore
 v11.1d,diagnostic,61.75,15,strong diversity diagnostics,block cosine improved but accuracy dipped,use diagnostics only
 v11.2,gate_repair,62.70,13,late write repair,late layers write real deltas,base for v12/v13 ideas
 v12,signal_bus,59.00,13,SignalBus + RolePlanner,roles worked but accuracy lower,keep concept but improve primitive structure
 v13,category_test,59.15,13,categorized primitives,very logical category program but accuracy still below v11/v11.2,next: exploration/exploitation phase schedule and softer category entropy/diversity
+v13_soft_explore,new_best,64.35,24,softer SignalBus + higher category/primitive temp + 25ep,beats v11/v11.2 and keeps logical category program,next: run memory_repair/low_signalbus or implement adaptive controller
