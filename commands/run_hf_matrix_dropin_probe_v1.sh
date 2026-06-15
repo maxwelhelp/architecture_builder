@@ -5,8 +5,28 @@ set -euo pipefail
 # Override if needed:
 #   HF_DROPIN_MODEL="hf-internal-testing/tiny-random-BertModel" bash commands/run_hf_matrix_dropin_probe_v1.sh
 MODEL_NAME="${HF_DROPIN_MODEL:-google/bert_uncased_L-2_H-128_A-2}"
+SCRIPT="experiments/hf_dropin/run_hf_matrix_dropin_probe.py"
+BACKUP="$(mktemp)"
+cp "$SCRIPT" "$BACKUP"
+restore_script() {
+  cp "$BACKUP" "$SCRIPT" || true
+  rm -f "$BACKUP" || true
+}
+trap restore_script EXIT
 
-python experiments/hf_dropin/run_hf_matrix_dropin_probe.py \
+# Temporary safety patch for PyTorch nn.Module: `.type` is already a Module method,
+# so registering a parameter named `type` crashes. Keep the repo clean by restoring
+# the file after the run.
+python - <<'PY'
+from pathlib import Path
+p = Path("experiments/hf_dropin/run_hf_matrix_dropin_probe.py")
+s = p.read_text(encoding="utf-8")
+s = s.replace("self.type = nn.Parameter", "self.type_emb = nn.Parameter")
+s = s.replace("self.type.view", "self.type_emb.view")
+p.write_text(s, encoding="utf-8")
+PY
+
+python "$SCRIPT" \
   --model-name "$MODEL_NAME" \
   --layer-idx 0 \
   --device cuda \
