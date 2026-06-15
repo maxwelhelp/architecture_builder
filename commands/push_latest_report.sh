@@ -16,8 +16,11 @@ if [[ -n "$heavy_staged" ]]; then
   exit 1
 fi
 
-# Stage only safe project/report files.
-git add reports docs README.md .gitignore commands tools old src skills || true
+# Stage only safe project/report files. Some directories may not exist yet.
+git add reports docs README.md .gitignore commands tools old src || true
+if [[ -d skills ]]; then
+  git add skills || true
+fi
 
 if git diff --cached --quiet; then
   echo "Nothing new to commit. Running git push anyway in case local commits are ahead."
