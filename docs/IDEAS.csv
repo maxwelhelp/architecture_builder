@@ -8,10 +8,13 @@ I006,planned,v13.1,high,gradient usefulness analyzer,attention vs actual loss us
 I007,planned,v13.2,high,route categories,route specialization,route diversity often stays high
 I008,planned,v13.3,medium,architecture memory ranking,soft priors from best runs,export exists; ranking not yet implemented
 I009,avoid,water,high,blockless all-to-all water,poor specialization,do not return for SpeechCommands
-I010,planned,v14,high,adaptive architecture controller,automatic explore/exploit/repair/rollback,controller prototype added in attention replacement probe
+I010,working,hf_dropin,high,adaptive architecture controller,automatic explore/exploit/repair/rollback with pending buffer and action cooldown,added to HF drop-in probe
 I011,planned,later,medium,nullspace/rank growth,capacity without forgetting,needs rank analyzer first
 I012,working,v13_soft_explore,high,memory primitive variants,class_pair_memory/ema_memory,used in L2/L3 even when memory category is weak
 I013,working,v13_soft_explore,high,repair primitive variants,late_read_repair/class_pair_contrast,L2 repair/suppress/memory became useful
 I014,working,v13_soft_explore,medium,weak-class late read,force weak classes to late blocks,go reads L3 strongly in soft explore
 I015,working,repo,high,gitignore data/runs,keep datasets safe,do not use git clean -fdx
-I016,testing,attention_probe,high,matrix backend replaces sequence attention block,distill frozen MHA output,checks whether matrix spaces can imitate attention
+I016,working,attention_probe,high,matrix backend replaces sequence attention block,distill frozen MHA output,val_cos around 0.998 on probe
+I017,testing,hf_dropin,high,HF hidden-layer matrix drop-in,replace one layer transition hidden_states[i]->hidden_states[i+1],uses real HF model prajjwal1/bert-tiny and matrix heads
+I018,testing,hf_dropin,high,matrix sequence heads,replace MLP output head with token-block/evidence/memory/global matrix heads,keeps drop-in output head aligned with matrix-space rule
+I019,testing,hf_dropin,medium,growth recommendation signal,controller logs add_depth/add_width_or_primitive recommendations,actual dynamic module growth later
