@@ -1,0 +1,8 @@
+version,status,best_val_acc,epoch,main_change,main_result,next_action
+v9.7,baseline,57.15,15,tree/vectorized grid,good accuracy but energy/global shortcut,keep as baseline
+v10,archived,45.85,5,matrix attention backend,too much short_onset repetition,do not continue directly
+v11,best_accuracy,63.55,15,logical phase roles,best old accuracy and logical program,compare against v13
+v11.1d,diagnostic,61.75,15,strong diversity diagnostics,block cosine improved but accuracy dipped,use diagnostics only
+v11.2,gate_repair,62.70,13,late write repair,late layers write real deltas,base for v12/v13 ideas
+v12,signal_bus,59.00,13,SignalBus + RolePlanner,roles worked but accuracy lower,keep concept but improve primitive structure
+v13,testing,unknown,unknown,categorized primitives,fixes flat primitive selection,test 15ep
