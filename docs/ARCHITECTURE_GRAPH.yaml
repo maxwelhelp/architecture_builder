@@ -1,0 +1,170 @@
+version: universal_matrix_program_logic_graph_v1
+purpose: >
+  Machine-readable map of the Universal Matrix Program architecture, signals,
+  growth actions, diagnostics, and planned skill transfer.
+
+design_rules:
+  - computation_must_stay_matrix_space_native
+  - input_adapters_and_output_heads_are_task_specific
+  - universal_core_should_be_shared
+  - growth_location_must_come_from_health_signals
+  - weak_priors_allowed_hardcoded_specialization_disallowed
+  - new_primitives_require_dedup_and_heldout_validation
+  - every_run_must_export_metrics_analysis_and_pseudocode
+
+spaces:
+  TokenMatrix:
+    source: task_input_adapter
+    role: structured_tokens_or_hidden_states
+    examples: [hf_hidden_states, audio_tokens, particle_tokens, image_patches]
+  EvidenceMatrix:
+    source: TokenMatrix
+    role: structural_summaries_for_mechanism
+    current_ops: [chunks, global_summary, delta_summary, energy_stats]
+    planned_ops: [local_window_summary, landmark_summary, pairwise_summary]
+  TaskMatrix:
+    source: task_and_head_metadata
+    role: tells_core_what_pressure_or_target_family_is_active
+    planned_signals: [head_type, loss_type, weak_class, confusion, error_embedding]
+  MechanismMatrix:
+    source: universal_core
+    role: main_program_space
+    hierarchy: [layer, block, step, primitive_mix]
+  MemoryMatrix:
+    source: universal_core
+    role: reusable_internal_registers
+    current: simple_memory_cells
+    planned: [kv_memory_keys, kv_memory_values, memory_write_gates]
+  GlobalMatrix:
+    source: universal_core
+    role: global_context_registers
+  MatrixHeads:
+    source: task_specific_output_adapter
+    role: produce_losses_outputs_and_head_read_pressure
+    current_heads: [block, delta, norm]
+    planned_heads: [task_prediction, uncertainty, constraint, adapter_delta]
+
+program_hierarchy:
+  layer:
+    purpose: sequential_global_stage
+    growth_action: add_depth
+  block:
+    purpose: parallel_branch_or_submatrix
+    growth_action: add_width
+  step:
+    purpose: ordered_execution_slot_inside_block
+    growth_action: add_step
+  primitive:
+    purpose: operation_vocabulary
+    growth_action: add_primitive
+
+primitive_families:
+  current:
+    - identity
+    - evidence_read
+    - task_read
+    - route_read
+    - delta_route
+    - compare_mul
+    - memory_read
+    - memory_write
+    - global_summary
+    - suppress_global
+    - normalize
+    - energy_count
+    - residual_repair
+    - aggregate_merge
+  planned:
+    residual_delta: [residual_stream_write, delta_update, refdelta]
+    normalization: [layernorm_affine_approx, mean_center, variance_scale, channel_group_norm]
+    route_token: [local_window_route, content_route, token_pair_compare, prefix_summary]
+    memory: [kv_memory_read, memory_write_gate, copy_gate, ema_memory_update]
+    spectral_rank: [low_rank_projector, rank_compress]
+
+attention_families:
+  current:
+    - cross_space_mechanism_to_evidence
+    - cross_space_mechanism_to_task
+    - cross_space_mechanism_to_memory
+    - head_to_blocks
+  planned:
+    - memory_key_value_attention
+    - local_window_attention
+    - landmark_low_rank_attention
+    - route_attention_for_growth_targeting
+    - pairwise_relation_attention_for_particles_objects
+
+signal_flow:
+  losses:
+    produces: [block_mse, block_cos, delta_mse, delta_cos, norm_mse, norm_cos]
+    feeds: [head_error_pressure, controller_score]
+  head_read_pressure:
+    source: MatrixHeads
+    feeds: [planner_attention, target_layer_block_step]
+  step_health:
+    sources: [operator_entropy, category_entropy, route_entropy, gate, grad_health, block_cosine]
+    feeds: [planner_attention, action_scores, prune_score]
+  planner_attention:
+    source: all_active_layer_block_step_slots
+    feeds: [add_step_score, add_depth_score, add_width_score, add_primitive_score, prune_step_score]
+  action_memory:
+    source: controller_history
+    stores: [action, target, score_before, score_after, reward, cooldown, pending]
+    feeds: [cooldown, rollback, skill_bank]
+
+controller_actions:
+  add_step:
+    use_when: [operator_entropy_high, head_pressure_on_block, ordering_needed, previous_step_reward_positive]
+    avoid_when: [target_on_cooldown, step_count_high, operator_mix_collapsed, weak_reward_recently]
+  add_depth:
+    use_when: [stage_transition_overloaded, delta_gap_high, global_program_too_short]
+  add_width:
+    use_when: [head_conflict, block_read_concentration, high_block_cosine]
+  add_primitive:
+    use_when: [old_mechanisms_failed, operator_entropy_low, repeated_residual, heldout_candidate_gain]
+    avoid_when: [step_depth_width_still_promising]
+  prune_step:
+    use_when: [low_gate, low_grad, low_head_pressure, bad_action_reward]
+  rollback:
+    use_when: [pending_action_hurt, score_drop]
+
+reports:
+  required_files:
+    - metrics.csv
+    - final_report.json
+    - analysis_epoch_XXX.json
+    - controller_state.jsonl
+    - program_pseudocode.md
+  exporter: tools/export_program_pseudocode.py
+
+skill_memory:
+  status: planned
+  files:
+    - skills/skill_bank.jsonl
+    - skills/rejected_skills.jsonl
+    - skills/skill_metrics.csv
+  transfer_modes:
+    - priors_only_without_checkpoint
+    - compatible_checkpoint_with_aligned_basis
+  skill_types:
+    - step_program_motif
+    - primitive_prior
+    - route_memory_pattern
+    - growth_policy_prior
+    - matrix_attention_pattern
+    - pseudocode_pattern
+
+known_weak_spots:
+  - primitive_mining_not_full_residual_svd_yet
+  - pruning_recycling_not_full_alive_gate_yet
+  - memory_attention_not_key_value_yet
+  - no_cross_task_skill_bank_yet
+  - no_automatic_pseudocode_generation_in_publish_script_yet
+
+next_recommended_steps:
+  - run_v2_2_step_planner
+  - export_pseudocode_for_v2_2
+  - analyze_planner_attention_and_action_history
+  - implement_skill_candidate_extractor
+  - add_memory_kv_attention
+  - add_alive_gates_and_recycle_slots
