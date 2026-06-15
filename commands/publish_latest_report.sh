@@ -28,6 +28,7 @@ copy_if_exists "$RUN_DIR/metrics.csv" "$DEST/metrics.csv"
 copy_if_exists "$RUN_DIR/final_report.json" "$DEST/final_report.json"
 copy_if_exists "$RUN_DIR/architecture_memory.jsonl" "$DEST/architecture_memory.jsonl"
 copy_if_exists "$RUN_DIR/controller_state.jsonl" "$DEST/controller_state.jsonl"
+copy_if_exists "$RUN_DIR/program_pseudocode.md" "$DEST/program_pseudocode.md"
 
 # Copy only the latest lightweight analysis file, not full heavy run folders.
 copy_latest_pattern "$RUN_DIR/seq_analysis_epoch_*.json"
@@ -48,13 +49,14 @@ Included lightweight files only:
 - final_report.json
 - architecture_memory.jsonl if present
 - controller_state.jsonl if present
+- program_pseudocode.md if present
 - latest seq_analysis_epoch_XXX.json if present
 - latest analysis_epoch_XXX.json if present
 
-No checkpoints, weights, datasets, audio, or full run folder are committed.
+No checkpoints, weights, datasets, audio, logs, or full run folder are committed.
 EOF
 
-git add "$DEST" docs/IDEAS.csv docs/VERSION_STATS.csv docs/PLAN.md README.md .gitignore commands || true
+git add "$DEST" docs/IDEAS.csv docs/VERSION_STATS.csv docs/PLAN.md README.md .gitignore commands tools || true
 
 echo "Prepared report files in $DEST"
 echo "Review with: git status"
