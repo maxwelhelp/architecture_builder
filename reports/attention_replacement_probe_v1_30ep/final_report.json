@@ -1,0 +1,39 @@
+{
+  "best": {
+    "score": 0.21660695974715058,
+    "epoch": 27,
+    "val_mse": 0.0043726115953177215,
+    "val_cos": 0.9978219568729401
+  },
+  "args": {
+    "device": "cuda",
+    "amp": "bf16",
+    "seed": 42,
+    "dim": 128,
+    "seq_len": 64,
+    "teacher_heads": 4,
+    "evidence_cells": 40,
+    "task_cells": 12,
+    "num_layers": 4,
+    "blocks_per_layer": 4,
+    "memory_cells": 6,
+    "global_cells": 3,
+    "category_temp": 1.4,
+    "primitive_temp": 1.2,
+    "batch_size": 128,
+    "eval_batch_size": 256,
+    "steps_per_epoch": 120,
+    "val_steps": 20,
+    "epochs": 30,
+    "lr": 0.0007,
+    "weight_decay": 0.01,
+    "grad_clip": 0.7,
+    "lambda_cos": 0.25,
+    "controller": true,
+    "controller_patience": 2,
+    "rollback_patience": 2,
+    "controller_min_delta": 0.002,
+    "out_dir": "../../runs/attention_replacement_probe_v1_30ep"
+  },
+  "architecture": "matrix_attention_replacement_probe_v1"
+}
