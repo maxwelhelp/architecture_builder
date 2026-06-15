@@ -9,3 +9,4 @@ v13,category_test,59.15,13,categorized primitives,very logical category program 
 v13_soft_explore,new_best,64.35,24,softer SignalBus + higher category/primitive temp + 25ep,beats v11/v11.2 and keeps logical category program,next: compare memory_repair/low_signalbus
 sequence_block_probe_v1,good_probe,NA,27,matrix backend distills frozen MHA-like sequence block,val_cos 0.99782 and val_mse 0.00437; proves backend can imitate sequence block,next inspect analysis with updated publisher
 multihead_dropin_probe_v1,testing,NA,NA,shared matrix backend with attention/ffn/block heads,tests how many heads/depth/primitives are needed for real drop-in replacement,run and inspect per-head cos/mse and program
+hf_matrix_dropin_probe_v1,testing,NA,NA,drop-in replacement for one hidden layer of prajjwal1/bert-tiny,uses HF hidden states and matrix heads block/delta/norm,next run 40ep and inspect controller/growth signals
