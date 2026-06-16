@@ -292,7 +292,13 @@ class MelPatchFrontend(nn.Module):
 
 @dataclasses.dataclass
 class SeqAux:
-    evidence_attention: torch.Tensor      # [B,N,E]
+    evidence_attention: torch.Tensor      # [B,N,E] proxy: 0.5*onset + 0.5*raw evidence
+    time_attention: torch.Tensor          # [B,N,T_time]
+    freq_attention: torch.Tensor          # [B,N,T_freq]
+    onset_attention: torch.Tensor         # [B,N,E]
+    energy_attention: torch.Tensor        # [B,N,T_energy]
+    global_attention: torch.Tensor        # [B,N,G]
+    memory_attention: torch.Tensor        # [B,N,M]
     task_attention: torch.Tensor          # [B,N,T_task]
     route_attention: torch.Tensor         # [B,N,2+blocks_per_layer] = base/global/prev blocks
     operator_gates: torch.Tensor          # [B,N,num_ops]
@@ -898,11 +904,15 @@ class SequentialMatrixCellsCore(nn.Module):
         K_task = self.task_k(task_matrix); V_task = self.task_v(task_matrix)
 
         states = [base]
-        evid_attns = []; task_attns = []; route_attns = []; op_gates_all = []
+        evid_attns = []
+        time_attns = []; freq_attns = []; onset_attns = []; energy_attns = []
+        global_attns = []; memory_attns = []
+        task_attns = []; route_attns = []; op_gates_all = []
         dyn_gates = []; eff_gates = []
         update_norms = []; write_delta_norms = []
         live_write_delta_norms = []
-        role_mixes = []
+        role_mixes_live = []
+        role_mixes_report = []
         category_gates_all = []
         category_mixes = []
         signal_op_bias_norms = []
@@ -1021,7 +1031,8 @@ class SequentialMatrixCellsCore(nn.Module):
             role_mix = torch.softmax((role_logits + role_bias).float(), dim=-1).to(dtype)  # [B,R]
             role_prior = torch.matmul(role_mix, self.role_op_basis.to(device=device, dtype=dtype))  # [B,O]
             role_category_prior = torch.matmul(role_mix, self.role_category_basis.to(device=device, dtype=dtype))  # [B,Cat]
-            role_mixes.append(role_mix.detach().float().mean(dim=0))
+            role_mixes_live.append(role_mix.float().mean(dim=0))
+            role_mixes_report.append(role_mix.detach().float().mean(dim=0))
             signal_op_bias_norms.append(signal_op_bias.detach().float().norm(dim=-1).mean())
 
             # CategoryPlanner: choose logical primitive family before choosing primitive inside it.
@@ -1090,7 +1101,10 @@ class SequentialMatrixCellsCore(nn.Module):
             prev_regions = new_regions
             prev_active_blocks = list(active_blocks)
             states.append(summaries)
-            evid_attns.append(A_ev); task_attns.append(A_task); route_attns.append(A_route); op_gates_all.append(op_gates); category_gates_all.append(category_gates)
+            evid_attns.append(A_ev)
+            time_attns.append(A_time); freq_attns.append(A_freq); onset_attns.append(A_onset); energy_attns.append(A_energy)
+            global_attns.append(A_global); memory_attns.append(A_mem)
+            task_attns.append(A_task); route_attns.append(A_route); op_gates_all.append(op_gates); category_gates_all.append(category_gates)
             dyn_gates.append(dyn_gate); eff_gates.append(eff_gate)
             update_norms.append(update.detach().float().norm(dim=-1))
             write_delta_norm_block_live = write_delta.float().norm(dim=-1).mean(dim=-1)
@@ -1099,6 +1113,12 @@ class SequentialMatrixCellsCore(nn.Module):
 
         stage_states = torch.cat([base[:, None, :]] + states[1:], dim=1)
         evidence_attention = torch.cat(evid_attns, dim=1) if evid_attns else torch.empty(B,0,E,device=device,dtype=dtype)
+        time_attention = torch.cat(time_attns, dim=1) if time_attns else torch.empty(B,0,time_tokens.shape[1],device=device,dtype=dtype)
+        freq_attention = torch.cat(freq_attns, dim=1) if freq_attns else torch.empty(B,0,freq_tokens.shape[1],device=device,dtype=dtype)
+        onset_attention = torch.cat(onset_attns, dim=1) if onset_attns else torch.empty(B,0,E,device=device,dtype=dtype)
+        energy_attention = torch.cat(energy_attns, dim=1) if energy_attns else torch.empty(B,0,energy_tokens.shape[1],device=device,dtype=dtype)
+        global_attention = torch.cat(global_attns, dim=1) if global_attns else torch.empty(B,0,self.global_cells,device=device,dtype=dtype)
+        memory_attention = torch.cat(memory_attns, dim=1) if memory_attns else torch.empty(B,0,self.memory_cells,device=device,dtype=dtype)
         task_attention = torch.cat(task_attns, dim=1) if task_attns else torch.empty(B,0,self.task_cells,device=device,dtype=dtype)
         route_attention = torch.cat(route_attns, dim=1) if route_attns else torch.empty(B,0,self.blocks_per_layer+2,device=device,dtype=dtype)
         operator_gates = torch.cat(op_gates_all, dim=1) if op_gates_all else torch.empty(B,0,self.num_ops,device=device,dtype=dtype)
@@ -1109,7 +1129,8 @@ class SequentialMatrixCellsCore(nn.Module):
         update_norm_by_block = torch.cat(update_norms, dim=1) if update_norms else torch.empty(B, 0, device=device)
         write_delta_norm_by_block = torch.cat(write_delta_norms, dim=1) if write_delta_norms else torch.empty(B, 0, device=device)
         live_write_delta_norm_by_block = torch.cat(live_write_delta_norms, dim=1) if live_write_delta_norms else torch.empty(B, 0, device=device)
-        role_mix_by_layer = torch.stack(role_mixes, dim=0) if role_mixes else torch.empty(0, self.num_roles, device=device)
+        role_mix_by_layer_live = torch.stack(role_mixes_live, dim=0) if role_mixes_live else torch.empty(0, self.num_roles, device=device)
+        role_mix_by_layer = torch.stack(role_mixes_report, dim=0) if role_mixes_report else torch.empty(0, self.num_roles, device=device)
         signal_summary = torch.stack([
             signal_ctx.detach().float().norm(dim=-1).mean(),
             signal_role_bias.detach().float().norm(dim=-1).mean(),
@@ -1285,17 +1306,17 @@ class SequentialMatrixCellsCore(nn.Module):
         weak_class_late_read_loss = (weak_w * F.relu(self.weak_class_late_read_target - late_mass).pow(2)).sum()
 
         # RolePlanner regularization.
-        if role_mix_by_layer.numel() > 0:
+        if role_mix_by_layer_live.numel() > 0:
             # Encourage adjacent layers to use different role mixtures, not one universal solution.
-            if role_mix_by_layer.shape[0] > 1:
-                rn = F.normalize(role_mix_by_layer.float(), dim=-1)
+            if role_mix_by_layer_live.shape[0] > 1:
+                rn = F.normalize(role_mix_by_layer_live.float(), dim=-1)
                 adj_sim = (rn[:-1] * rn[1:]).sum(dim=-1)
                 role_diversity_loss = F.relu(adj_sim - 0.65).pow(2).mean()
             else:
                 role_diversity_loss = torch.zeros((), device=device)
             # Keep final phase mostly aggregate/suppress unless data strongly proves otherwise.
-            if self.lock_last_role and role_mix_by_layer.shape[0] >= 1:
-                last = role_mix_by_layer[-1].float()
+            if self.lock_last_role and role_mix_by_layer_live.shape[0] >= 1:
+                last = role_mix_by_layer_live[-1].float()
                 agg_idx = self.ROLE_NAMES.index("aggregate")
                 sup_idx = self.ROLE_NAMES.index("suppress")
                 role_anchor_loss = F.relu(0.65 - (last[agg_idx] + 0.35 * last[sup_idx])).pow(2)
@@ -1331,6 +1352,12 @@ class SequentialMatrixCellsCore(nn.Module):
 
         aux = SeqAux(
             evidence_attention=evidence_attention.detach(),
+            time_attention=time_attention.detach(),
+            freq_attention=freq_attention.detach(),
+            onset_attention=onset_attention.detach(),
+            energy_attention=energy_attention.detach(),
+            global_attention=global_attention.detach(),
+            memory_attention=memory_attention.detach(),
             task_attention=task_attention.detach(),
             route_attention=route_attention.detach(),
             operator_gates=operator_gates.detach(),
@@ -1526,19 +1553,25 @@ class SequentialMatrixCellsModel(nn.Module):
 # ---------------------------
 
 class SeqAccumulator:
-    def __init__(self, num_classes: int, evidence_cells: int, chain_depth: int, num_layers: int = 4, blocks_per_layer: int = 3, decomp_every: int = 25):
+    def __init__(self, num_classes: int, evidence_cells: int, chain_depth: int, num_layers: int = 4, blocks_per_layer: int = 3, decomp_every: int = 25, topology_plan: List[List[int]] | None = None):
         self.num_classes = num_classes
         self.evidence_cells = evidence_cells
-        self.chain_depth = chain_depth
         self.num_layers = int(num_layers)
         self.blocks_per_layer = int(blocks_per_layer)
+        self.topology_plan = [list(x) for x in topology_plan] if topology_plan is not None else [list(range(self.blocks_per_layer)) for _ in range(self.num_layers)]
+        self.flat_to_layer_block = [(li, bi) for li, blocks in enumerate(self.topology_plan) for bi in blocks]
+        self.chain_depth = len(self.flat_to_layer_block)
         self.decomp_every = int(decomp_every)
         self.reset()
 
     def block_label(self, flat_idx: int) -> Dict[str, Any]:
-        layer = int(flat_idx) // max(1, self.blocks_per_layer)
-        block = int(flat_idx) % max(1, self.blocks_per_layer)
-        return {"stage": int(flat_idx), "layer": layer, "block": block, "name": f"L{layer}.B{block}"}
+        flat_idx = int(flat_idx)
+        if 0 <= flat_idx < len(self.flat_to_layer_block):
+            layer, block = self.flat_to_layer_block[flat_idx]
+        else:
+            layer = flat_idx // max(1, self.blocks_per_layer)
+            block = flat_idx % max(1, self.blocks_per_layer)
+        return {"stage": flat_idx, "layer": int(layer), "block": int(block), "name": f"L{int(layer)}.B{int(block)}"}
 
     def read_label(self, read_idx: int) -> Dict[str, Any]:
         if int(read_idx) == 0:
@@ -1550,6 +1583,12 @@ class SeqAccumulator:
     def reset(self):
         self.count = 0
         self.evidence_attention = None
+        self.time_attention = None
+        self.freq_attention = None
+        self.onset_attention = None
+        self.energy_attention = None
+        self.global_attention_by_block = None
+        self.memory_attention_by_block = None
         self.task_attention = None
         self.route_attention = None
         self.operator_gates = None
@@ -1604,7 +1643,13 @@ class SeqAccumulator:
             return x if old is None else old + x
 
         self.count += 1
-        self.evidence_attention = acc(self.evidence_attention, aux.evidence_attention.mean(dim=0))  # [L,S]
+        self.evidence_attention = acc(self.evidence_attention, aux.evidence_attention.mean(dim=0))  # [L,S] proxy
+        self.time_attention = acc(self.time_attention, aux.time_attention.mean(dim=0))
+        self.freq_attention = acc(self.freq_attention, aux.freq_attention.mean(dim=0))
+        self.onset_attention = acc(self.onset_attention, aux.onset_attention.mean(dim=0))
+        self.energy_attention = acc(self.energy_attention, aux.energy_attention.mean(dim=0))
+        self.global_attention_by_block = acc(self.global_attention_by_block, aux.global_attention.mean(dim=0))
+        self.memory_attention_by_block = acc(self.memory_attention_by_block, aux.memory_attention.mean(dim=0))
         self.task_attention = acc(self.task_attention, aux.task_attention.mean(dim=0))  # [L,T_task]
         self.route_attention = acc(self.route_attention, aux.route_attention.mean(dim=0))  # [L,R]
         self.operator_gates = acc(self.operator_gates, aux.operator_gates.mean(dim=0))  # [L,O]
@@ -1688,6 +1733,14 @@ class SeqAccumulator:
     def summary(self, classes: List[str]) -> Dict[str, Any]:
         c = max(1, self.count)
         ev_attn = self.evidence_attention / c if self.evidence_attention is not None else torch.zeros(self.chain_depth, self.evidence_cells)
+        channel_attn = {
+            "time": self.time_attention / c if self.time_attention is not None else None,
+            "freq": self.freq_attention / c if self.freq_attention is not None else None,
+            "onset": self.onset_attention / c if self.onset_attention is not None else None,
+            "energy": self.energy_attention / c if self.energy_attention is not None else None,
+            "global": self.global_attention_by_block / c if self.global_attention_by_block is not None else None,
+            "memory": self.memory_attention_by_block / c if self.memory_attention_by_block is not None else None,
+        }
         cls_attn = self.class_stage_attention / c if self.class_stage_attention is not None else torch.zeros(self.num_classes, self.chain_depth + 1)
 
         top_evidence_by_stage = []
@@ -1698,6 +1751,17 @@ class SeqAccumulator:
             top_evidence_by_stage.append(item)
 
         task_attn = self.task_attention / c if self.task_attention is not None else torch.zeros(self.chain_depth, 1)
+        attention_channels_by_stage = []
+        for channel_name, attn in channel_attn.items():
+            if attn is None or attn.numel() == 0:
+                continue
+            for i in range(attn.shape[0]):
+                vals, idxs = torch.topk(attn[i], k=min(5, attn.shape[1]))
+                item = self.block_label(i)
+                item["channel"] = channel_name
+                item["top"] = [{"cell": int(j), "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
+                attention_channels_by_stage.append(item)
+
         top_task_by_stage = []
         for i in range(task_attn.shape[0]):
             vals, idxs = torch.topk(task_attn[i], k=min(8, task_attn.shape[1]))
@@ -1836,6 +1900,13 @@ class SeqAccumulator:
                 "operator_program": ops,
                 "category_program": category_gates_by_stage[i]["categories"] if i < len(category_gates_by_stage) else [],
                 "evidence_patterns": [{"cell": int(j), "name": evidence_name(int(j)), "weight": float(v)} for v, j in zip(ev_vals.tolist(), ev_idxs.tolist())],
+                "attention_channel_patterns": {
+                    name: (
+                        [{"cell": int(j), "weight": float(v)} for v, j in zip(*[list(x) for x in torch.topk(attn[i], k=min(4, attn.shape[1]))])]
+                        if attn is not None and attn.numel() > 0 and i < attn.shape[0] else []
+                    )
+                    for name, attn in channel_attn.items()
+                },
                 "task_patterns": [{"cell": int(j), "name": task_name(int(j)), "weight": float(v)} for v, j in zip(task_vals.tolist(), task_idxs.tolist())],
                 "top_classes_using_block": top_classes,
                 "effective_gate": float((self.effective_stage_gate / c)[i]) if self.effective_stage_gate is not None and i < self.effective_stage_gate.shape[0] else None,
@@ -1971,6 +2042,7 @@ class SeqAccumulator:
             "static_stage_gate": self.static_stage_gate.tolist() if self.static_stage_gate is not None else [],
             "stage_state_norm": (self.stage_state_norm / c).tolist() if self.stage_state_norm is not None else [],
             "top_evidence_by_stage": top_evidence_by_stage,
+            "attention_channels_by_stage": attention_channels_by_stage,
             "top_task_by_stage": top_task_by_stage,
             "operator_gates_by_stage": operator_gates_by_stage,
             "operator_gate_mean": (op_gates.mean(dim=0).tolist() if op_gates.numel() else []),
@@ -2030,7 +2102,7 @@ def evaluate(model, loader, device: str, amp_dtype: torch.dtype, classes: List[s
     C = len(classes)
     conf = torch.zeros(C, C, dtype=torch.long)
     # In validation we force decomposition on sampled/early batches; val has too few batches for decomp_every=25.
-    acc = SeqAccumulator(num_classes=C, evidence_cells=args.evidence_cells, chain_depth=args.chain_depth, num_layers=args.num_layers, blocks_per_layer=args.blocks_per_layer, decomp_every=1)
+    acc = SeqAccumulator(num_classes=C, evidence_cells=args.evidence_cells, chain_depth=args.chain_depth, num_layers=args.num_layers, blocks_per_layer=args.blocks_per_layer, decomp_every=1, topology_plan=model.core.topology_plan)
 
     for bi, (wav, y) in enumerate(loader, start=1):
         if args.max_val_batches and bi > args.max_val_batches:
@@ -2729,6 +2801,7 @@ def build_argparser():
     p.add_argument("--architecture-memory", type=str, default="", help="optional json/jsonl memory from previous best architecture reports")
     p.add_argument("--architecture-memory-strength", type=float, default=0.08)
     p.add_argument("--export-architecture-memory", action="store_true", default=True)
+    p.add_argument("--no-export-architecture-memory", dest="export_architecture_memory", action="store_false")
     p.add_argument("--out-dir", type=str, default="./runs/sequential_matrix_cells_v13_categorized_signal_bus_builder")
 
     return p
