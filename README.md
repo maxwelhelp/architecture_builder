@@ -1,32 +1,185 @@
 # Architecture Builder
 
-Private research repo for the matrix architecture builder experiments.
+Private research repo for matrix-program architecture experiments.
 
-## Current active line
+This repository is used for fast experimental development, report publishing, and architecture-memory tracking. Heavy local data and checkpoints must stay out of git.
 
-Current active script is `sequential_matrix_cells_speechcommands_v13_categorized_signal_bus_builder.py`.
+## One-paragraph project goal
 
-The project direction is no longer plain blockless water. The current design is:
+Build a differentiable matrix-program builder that can assemble useful neural-network substructures from roles, categories, primitives, matrix memories, and learned signals. The long-term direction is not a single fixed model, but a system that can search, compare, archive, and reuse good architecture fragments across tasks.
+
+## Current active lines
+
+### 1. SpeechCommands matrix architecture
+
+Active legacy/large script:
 
 ```text
-EvidenceMatrix / TaskMatrix / MechanismMatrix / GlobalMatrix / MemoryMatrix
-        ↓
-SignalBus
-        ↓
-RolePlanner
-        ↓
-CategoryPlanner
-        ↓
-PrimitivePlanner
-        ↓
-Matrix program backend
-        ↓
-Task head
+sequential_matrix_cells_speechcommands_v13_categorized_signal_bus_builder.py
 ```
 
-## Important sync rule: do not delete dataset
+Main command:
 
-Datasets and runs are intentionally ignored by git:
+```bash
+bash commands/run_v13_15ep.sh
+```
+
+Current corrected v13/vNext ideas:
+
+- live RolePlanner gradients, not detached report-only role mixes;
+- honest attention reports: time/freq/onset/energy/global/memory channels;
+- topology-aware reports for grid and merge topologies;
+- fp32 softmax before cast for fp16/P40 stability;
+- MatrixMLP added as a primitive candidate;
+- entropy/balance schedule: early soft exploration, later sharper readable program.
+
+### 2. Modular vNext core
+
+New reusable code should go here:
+
+```text
+src/matrix_program/
+```
+
+Current modules:
+
+```text
+src/matrix_program/operators.py      operation metadata, families, costs, role hints
+src/matrix_program/shadow_topk.py    warmup/top-k/shadow planning helpers
+src/matrix_program/archive.py        lightweight architecture snapshot archive
+```
+
+Rule: do not add new complex logic to the huge v13 script unless it is only a local comparison. New reusable ideas should be small modules under `src/matrix_program/` or small experiment folders.
+
+### 3. HF drop-in / universal program probes
+
+Existing probes live under:
+
+```text
+experiments/hf_dropin/
+experiments/universal_program/
+experiments/attention_replacement/
+experiments/shadow_topk/
+```
+
+These are used to test ideas such as replacing a hidden layer/block/head with a matrix-program module before moving the idea into SpeechCommands or a larger model.
+
+## Architecture map
+
+The intended architecture is not a flat bag of primitives. It is a differentiable program builder:
+
+```text
+input / evidence / task signal
+  -> EvidenceMatrix / TaskMatrix / GlobalMatrix / MemoryMatrix
+  -> SignalBus
+  -> LayerPlanner
+  -> Block RolePlanner
+  -> CategoryPlanner
+  -> PrimitivePlanner
+  -> Matrix-program backend
+  -> write gates / memory updates / class read
+  -> task head
+```
+
+Current v13 decision chain:
+
+```text
+role -> category -> primitive -> matrix execution -> write -> class read
+```
+
+Planned v14 decision chain:
+
+```text
+layer -> block -> step -> primitive -> matrix_mlp/read/write
+```
+
+The important rule: early training should keep gradients flowing through many choices. Later training can sharpen/top-k the choices for readability and speed.
+
+## ShadowTopK / counterfactual branch search
+
+The next major idea is cheap branch search:
+
+```text
+h -> cheap sketch P(h) -> score all branches -> full compute top-k only
+```
+
+Training phases:
+
+```text
+warmup:  compute all branches fully; gradient reaches all primitives
+top-k:   cheap sketch scores all; full compute only k selected branches
+shadow:  sometimes compute one unselected branch for router learning only
+deploy:  fixed selected program; do not compute unselected branches
+```
+
+Prefer block-level or step-level top-k, not per-token top-k, because per-token top-k creates scatter/gather overhead and can be slower on Tesla P40.
+
+## MatrixMLP policy
+
+Plain MLP is mostly channel-wise:
+
+```text
+[B, N, D] -> [B, N, D]
+```
+
+MatrixMLP should mix a state/block/sequence axis and then a channel axis:
+
+```text
+score = Q(x) @ K(context)^T
+ctx   = softmax(score) @ V(context)
+out   = MLP([x, ctx, task/memory/global context])
+```
+
+Useful variants:
+
+```text
+matrix_mlp_local
+matrix_mlp_global
+matrix_mlp_lowrank
+matrix_mlp_memory
+```
+
+Safe primitives should also exist:
+
+```text
+noop
+identity
+keep_prev
+small_refine
+normalize
+suppress
+```
+
+## Reports and logs
+
+Heavy outputs stay local in `runs/`. Lightweight summaries go to `reports/`.
+
+Important report files:
+
+```text
+reports/<run_name>/README.md
+reports/<run_name>/metrics.csv
+reports/<run_name>/final_report.json
+reports/<run_name>/seq_analysis_epoch_*.json
+reports/<run_name>/analysis_epoch_*.json
+reports/<run_name>/architecture_memory.jsonl
+reports/<run_name>/program_pseudocode.md
+```
+
+How to publish a report:
+
+```bash
+bash commands/push_latest_report.sh \
+  ./runs/<run_dir> \
+  <report_name> \
+  "Add <report_name> report"
+```
+
+`push_latest_report.sh` stages only safe lightweight files and now does `git pull --rebase` before `git push`.
+
+## Git sync rules
+
+Never delete local datasets/runs. These are intentionally ignored:
 
 ```text
 data/
@@ -35,72 +188,135 @@ checkpoints/
 artifacts/
 ```
 
-Safe sync:
+Safe sync when there are no uncommitted changes:
 
 ```bash
-git pull --rebase
+bash commands/sync_rebase_push.sh
 ```
 
-Safe local update from this repo into your working project:
+Manual safe sync:
 
 ```bash
-rsync -av --exclude data --exclude runs --exclude checkpoints --exclude artifacts ./ /home/maxwelhelp/test/sience/experiments/math_search/WORKING_BEST/Functional\ Matrix\ Grower/
+git status -sb
+git pull --rebase origin main
+git push origin main
 ```
 
-Do **not** use this in the project folder unless you know what you are doing:
+Do not run this in a working experiment folder unless you fully understand the consequences:
 
 ```bash
 git clean -fdx
 ```
 
-`git clean -fdx` can delete ignored local folders such as datasets and runs.
+It can delete ignored local datasets and runs.
 
-## Project layout
+## P40 hardware notes
+
+Primary local GPU: Tesla P40 / Pascal.
+
+Prefer:
 
 ```text
-src/current/        latest active implementation
-old/                best historical versions / baselines
-docs/               design docs, plan, notes
-commands/           ready-to-run commands
-reports/            lightweight report summaries only
+--amp fp16
 ```
 
-## Main experiment command
+Avoid using bf16 as default on P40. Triton is not a reliable default path for this GPU. First optimize with vectorized PyTorch; only then consider a small C++/CUDA extension for a proven bottleneck.
 
-See:
+Potential future CUDA targets:
 
 ```text
-commands/run_v13_15ep.sh
+fused weighted operator sum
+fused write gate + residual update
+grouped MatrixMLP block mixer
 ```
 
-## What to compare
+## What to compare in reviews
 
-Primary metrics:
+Primary task metrics:
 
 ```text
-best_val_acc
-class_acc.go / no / down / left / right
+best_val_acc / score
+train vs val gap
+per-class confusion
+loss/CE trend
+```
+
+Architecture health metrics:
+
+```text
+rolediv
+catdiv
+catent
+phase
+routediv
+blkdiv
+latew
+ldyn
+weaklate
+sigop
+eff_gate / dyn_gate
+```
+
+Program reports:
+
+```text
 role_mix_by_layer
 category_mix_by_layer
 operator_program_by_block
+attention_channels_by_stage
 route_usage_by_block
 gate_write_by_block
 matrix_decomposition
-speed_forward_ms / speed_backward_ms
 ```
 
-## Current known direction
-
-v13 adds categorized primitives so the model does not select from a flat operator pile. The intended decision chain is:
+Red flags:
 
 ```text
-role → category → primitive → matrix execution
+rolediv=0 for many epochs
+phase near 0
+latew=0 and ldyn=0 when memory/repair should be used
+train improves while val drops sharply
+operator program becomes soft soup forever
 ```
 
-Next likely work:
+## Known baselines / context
+
+Old strong SpeechCommands lines included about 62-64% validation in several runs. A new v13/vNext run around 58-59% is a sanity pass, not yet a new best. It means the code works, but roles/phases/late-write may not be alive enough.
+
+Use `docs/VERSION_STATS.csv` for historical scores.
+
+## Agent review checklist
+
+When another agent reviews this repo, it should first read:
 
 ```text
-v13.1 gradient usefulness analyzer
-v13.2 route category planner
-v13.3 architecture memory ranking across runs
+README.md
+docs/MATRIX_PROGRAM_LOGIC_VNEXT.md
+docs/VERSION_STATS.csv
+src/matrix_program/README.md
+commands/run_v13_15ep.sh
+commands/push_latest_report.sh
+```
+
+Then inspect the latest report folder under `reports/`.
+
+Questions to answer in a review:
+
+1. Did task quality improve over the relevant baseline?
+2. Did the model assemble a meaningful program or just soft-mix everything?
+3. Are roles/phases/memory/write gates alive?
+4. Which primitives dominate, and are they logically matched to layer/block position?
+5. Are expensive primitives justified by score gain?
+6. What should be archived as a reusable architecture skill?
+
+## Development direction
+
+Immediate direction:
+
+```text
+1. Analyze v13_vnext_matrixmlp_15ep report.
+2. Run longer v13_vnext_matrixmlp_45ep with healthier role/phase/late-write settings.
+3. Test ShadowTopK on HF hidden-layer replacement.
+4. Add architecture_archive_v1 to save best and interesting-bad programs as soft priors.
+5. Move new code into src/matrix_program instead of patching the huge v13 file.
 ```
