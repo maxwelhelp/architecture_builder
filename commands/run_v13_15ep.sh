@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Tesla P40 / Pascal is safer with fp16 than bf16.
 python sequential_matrix_cells_speechcommands_v13_categorized_signal_bus_builder.py \
   --data-root ./data/speechcommands \
   --device cuda \
-  --amp bf16 \
+  --amp fp16 \
   --classes yes,no,up,down,left,right,on,off,stop,go \
   --train-limit 12000 \
   --val-limit 2000 \
