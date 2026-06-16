@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 TARGET = Path("sequential_matrix_cells_speechcommands_v13_categorized_signal_bus_builder.py")
@@ -23,27 +24,59 @@ def replace_once(text: str, old: str, new: str, name: str) -> str:
     return text.replace(old, new, 1)
 
 
+def ensure_matrix_mlp_in_local_op_names(text: str) -> str:
+    # Patch local summary/report lists like: op_names = ["mlp", "bilinear", ...]
+    # The main class may not expose module-level OP_NAMES, so summary must use local op_names.
+    pattern = re.compile(r'(op_names\s*=\s*\[[^\]]*?"mlp"\s*,\s*)"bilinear"', re.S)
+    n = 0
+
+    def repl(m: re.Match[str]) -> str:
+        nonlocal n
+        block_start = m.group(0)
+        # Avoid double insertion if this specific list already has matrix_mlp nearby.
+        list_prefix = m.group(1)
+        if '"matrix_mlp"' in list_prefix:
+            return block_start
+        n += 1
+        return m.group(1) + '"matrix_mlp", "bilinear"'
+
+    text2 = pattern.sub(repl, text)
+    print(f"PATCH local op_names matrix_mlp: {n} list(s)")
+    return text2
+
+
 def main() -> None:
     if not TARGET.exists():
         raise SystemExit(f"Missing {TARGET}")
     text = TARGET.read_text(encoding="utf-8")
     original = text
 
-    # After adding matrix_mlp, summary must use the module-level OP_NAMES,
-    # because SeqAccumulator does not own self.OP_NAMES. Guard out-of-range
-    # indices so reports never crash even if a future candidate is added.
-    text = replace_all(
-        text,
-        'op_names[int(j)]',
-        'OP_NAMES[int(j)] if int(j) < len(OP_NAMES) else f"op_{int(j)}"',
-        "summary op_names guard",
-    )
+    # Use local summary op_names, not OP_NAMES/self.OP_NAMES. SeqAccumulator does not own self.OP_NAMES,
+    # and this file does not reliably expose global OP_NAMES.
     text = replace_all(
         text,
         'self.OP_NAMES[int(j)] if int(j) < len(self.OP_NAMES) else f"op_{int(j)}"',
-        'OP_NAMES[int(j)] if int(j) < len(OP_NAMES) else f"op_{int(j)}"',
+        'op_names[int(j)] if int(j) < len(op_names) else f"op_{int(j)}"',
         "repair accidental self.OP_NAMES guard",
     )
+    text = replace_all(
+        text,
+        'OP_NAMES[int(j)] if int(j) < len(OP_NAMES) else f"op_{int(j)}"',
+        'op_names[int(j)] if int(j) < len(op_names) else f"op_{int(j)}"',
+        "repair accidental global OP_NAMES guard",
+    )
+    text = replace_all(
+        text,
+        'op_names[int(j)]',
+        'op_names[int(j)] if int(j) < len(op_names) else f"op_{int(j)}"',
+        "summary op_names bounds guard",
+    )
+    # Undo double-guard if a previous repair was run more than once.
+    text = text.replace(
+        'op_names[int(j)] if int(j) < len(op_names) else f"op_{int(j)}" if int(j) < len(op_names) else f"op_{int(j)}"',
+        'op_names[int(j)] if int(j) < len(op_names) else f"op_{int(j)}"',
+    )
+    text = ensure_matrix_mlp_in_local_op_names(text)
 
     # Some patched files still miss topology_plan in train_one_epoch accumulator,
     # while evaluate already has it. Patch the train accumulator call as well.
