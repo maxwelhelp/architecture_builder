@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import torch
 
-from sequential_matrix_cells_speechcommands_v13_categorized_signal_bus_builder import (
+# When this script is executed as `python tools/smoke_v13_topologies.py`,
+# Python puts `tools/` on sys.path, not the repository root. Add the root
+# explicitly so the main v13 file can be imported reliably.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from sequential_matrix_cells_speechcommands_v13_categorized_signal_bus_builder import (  # noqa: E402
     SeqAccumulator,
     SequentialMatrixCellsCore,
 )
