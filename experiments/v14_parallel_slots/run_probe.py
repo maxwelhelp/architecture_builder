@@ -14,6 +14,7 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from src.matrix_program.gradient_signals import slot_gradient_health  # noqa: E402
 from src.matrix_program.parallel_core import ParallelSlotConfig, ParallelSlotCore  # noqa: E402
 
 
@@ -72,12 +73,15 @@ def run(args):
             sync_if_cuda(device); t_data = time.perf_counter()
 
             h, aux = core(x, warmup_all=step <= args.warmup_steps)
+            if args.grad_health:
+                h.retain_grad()
             logits = head(core.readout(h))
             loss = F.cross_entropy(logits, y)
             sync_if_cuda(device); t_fwd = time.perf_counter()
 
             opt.zero_grad(set_to_none=True)
             loss.backward()
+            grad_health = slot_gradient_health(h.grad if args.grad_health else None) if args.grad_health else {}
             nn.utils.clip_grad_norm_(list(core.parameters()) + list(head.parameters()), 1.0)
             sync_if_cuda(device); t_bwd = time.perf_counter()
 
@@ -103,6 +107,7 @@ def run(args):
                 "opt_ms": (t_opt - t_bwd) * 1000.0,
                 "step_ms": (t_opt - t0) * 1000.0,
                 "max_cuda_mem_mb": float(mem_alloc_mb),
+                **grad_health,
             }
             rows.append(row)
             if step % args.log_every == 0 or step == 1:
@@ -115,17 +120,18 @@ def run(args):
             profile_txt = out / "profiles" / "profiler_table.txt"
             profile_txt.write_text(table, encoding="utf-8")
             print("profiler_table", profile_txt, flush=True)
-    summary = {
-        "args": vars(args),
-        "rows": rows[-20:],
-        "speed_summary": {
-            "mean_step_ms": sum(r["step_ms"] for r in rows[max(0, len(rows) - args.speed_tail):]) / max(1, min(args.speed_tail, len(rows))),
-            "mean_fwd_ms": sum(r["fwd_ms"] for r in rows[max(0, len(rows) - args.speed_tail):]) / max(1, min(args.speed_tail, len(rows))),
-            "mean_bwd_ms": sum(r["bwd_ms"] for r in rows[max(0, len(rows) - args.speed_tail):]) / max(1, min(args.speed_tail, len(rows))),
-            "mean_opt_ms": sum(r["opt_ms"] for r in rows[max(0, len(rows) - args.speed_tail):]) / max(1, min(args.speed_tail, len(rows))),
-            "max_cuda_mem_mb": max([r["max_cuda_mem_mb"] for r in rows], default=0.0),
-        },
+    tail = rows[max(0, len(rows) - args.speed_tail):]
+    speed_summary = {
+        "mean_step_ms": sum(r["step_ms"] for r in tail) / max(1, len(tail)),
+        "mean_fwd_ms": sum(r["fwd_ms"] for r in tail) / max(1, len(tail)),
+        "mean_bwd_ms": sum(r["bwd_ms"] for r in tail) / max(1, len(tail)),
+        "mean_opt_ms": sum(r["opt_ms"] for r in tail) / max(1, len(tail)),
+        "max_cuda_mem_mb": max([r["max_cuda_mem_mb"] for r in rows], default=0.0),
     }
+    if args.grad_health:
+        for k in ["grad_slot_norm_mean", "grad_slot_norm_max", "grad_layer_entropy", "grad_block_entropy", "grad_dead_slot_frac"]:
+            speed_summary[f"mean_{k}"] = sum(float(r.get(k, 0.0)) for r in tail) / max(1, len(tail))
+    summary = {"args": vars(args), "rows": rows[-20:], "speed_summary": speed_summary}
     (out / "probe_report.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print("done", out / "probe_report.json")
 
@@ -151,6 +157,7 @@ def parser():
     p.add_argument("--lr", type=float, default=5e-4)
     p.add_argument("--log-every", type=int, default=20)
     p.add_argument("--speed-tail", type=int, default=30)
+    p.add_argument("--grad-health", action="store_true")
     p.add_argument("--torch-profiler", action="store_true")
     p.add_argument("--profile-wait", type=int, default=5)
     p.add_argument("--profile-warmup", type=int, default=5)
