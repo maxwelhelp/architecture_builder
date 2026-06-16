@@ -13,7 +13,7 @@ fi
 
 mkdir -p "$REPORT_DIR"
 
-# Copy compact/common files from both v13 and v14 experiments.
+# Copy compact/common files from v13/v14/StepBuilder experiments.
 for f in \
   probe_report.json \
   metrics.csv \
@@ -27,6 +27,8 @@ for f in \
   profiler_table.txt \
   program_pseudocode.md \
   program_pseudocode_v2.md \
+  step_builder_report.md \
+  step_skills.jsonl \
   architecture_memory.jsonl \
   controller_state.jsonl \
   README.md; do
@@ -64,6 +66,7 @@ Included when available:
 - \`metrics.csv\`, \`console.log\`, \`final_report.json\`
 - \`health_diagnosis.md/json\` or \`health_report.md/json\`
 - \`program_pseudocode.md\`, \`program_pseudocode_v2.md\`
+- \`step_builder_report.md\`, \`step_skills.jsonl\`
 - last seq/analysis JSON snapshots
 - profiler table if available
 
@@ -74,10 +77,11 @@ cat ${REPORT_DIR}/health_diagnosis.md
 cat ${REPORT_DIR}/program_pseudocode_v2.md
 \`\`\`
 
-Quick v14 review:
+Quick v14/StepBuilder review:
 
 \`\`\`bash
 cat ${REPORT_DIR}/health_report.md
+cat ${REPORT_DIR}/step_builder_report.md
 python tools/analyze_v14_probe_health.py ${REPORT_DIR}
 \`\`\`
 EOF
