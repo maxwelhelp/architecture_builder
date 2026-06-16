@@ -5,9 +5,13 @@ MODE="${V14_MODE:-parallel_refine}"
 TOPK="${V14_TOPK:-3}"
 REFINE="${V14_REFINE_ITERS:-2}"
 PROF="${V14_PROFILER:-0}"
+GRAD="${V14_GRAD_HEALTH:-0}"
 EXTRA=()
 if [[ "$PROF" == "1" || "$PROF" == "true" || "$PROF" == "yes" ]]; then
   EXTRA+=(--torch-profiler --profile-wait "${V14_PROFILE_WAIT:-5}" --profile-warmup "${V14_PROFILE_WARMUP:-5}" --profile-active "${V14_PROFILE_ACTIVE:-10}")
+fi
+if [[ "$GRAD" == "1" || "$GRAD" == "true" || "$GRAD" == "yes" ]]; then
+  EXTRA+=(--grad-health)
 fi
 
 python experiments/v14_parallel_slots/run_probe.py \
