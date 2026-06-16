@@ -8,6 +8,16 @@ This repository is used for fast experimental development, report publishing, an
 
 Build a differentiable matrix-program builder that can assemble useful neural-network substructures from roles, categories, primitives, matrix memories, and learned signals. The long-term direction is not a single fixed model, but a system that can search, compare, archive, and reuse good architecture fragments across tasks.
 
+## Living architecture source of truth
+
+The main design contract is:
+
+```text
+ARCHITECTURE.md
+```
+
+Update that file whenever the system logic changes. It contains the current grammar, logging contract, roadmap, and inactive/rejected ideas. The README is only a short entry point.
+
 ## Core principle / root problem
 
 The main system problem is documented here:
