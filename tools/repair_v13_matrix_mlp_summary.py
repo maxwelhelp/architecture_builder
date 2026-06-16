@@ -29,15 +29,20 @@ def main() -> None:
     text = TARGET.read_text(encoding="utf-8")
     original = text
 
-    # After adding matrix_mlp, any local summary op-name list must have the same
-    # length/order as runtime OP_NAMES/op_gates. The safest report fallback is to
-    # index self.OP_NAMES and guard out-of-range indices instead of relying on a
-    # stale hardcoded list.
+    # After adding matrix_mlp, summary must use the module-level OP_NAMES,
+    # because SeqAccumulator does not own self.OP_NAMES. Guard out-of-range
+    # indices so reports never crash even if a future candidate is added.
     text = replace_all(
         text,
         'op_names[int(j)]',
-        'self.OP_NAMES[int(j)] if int(j) < len(self.OP_NAMES) else f"op_{int(j)}"',
+        'OP_NAMES[int(j)] if int(j) < len(OP_NAMES) else f"op_{int(j)}"',
         "summary op_names guard",
+    )
+    text = replace_all(
+        text,
+        'self.OP_NAMES[int(j)] if int(j) < len(self.OP_NAMES) else f"op_{int(j)}"',
+        'OP_NAMES[int(j)] if int(j) < len(OP_NAMES) else f"op_{int(j)}"',
+        "repair accidental self.OP_NAMES guard",
     )
 
     # Some patched files still miss topology_plan in train_one_epoch accumulator,
