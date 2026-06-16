@@ -1791,17 +1791,6 @@ class SeqAccumulator:
                 item["top"] = [{"cell": int(j), "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
                 attention_channels_by_stage.append(item)
 
-        attention_channels_by_stage = []
-        for channel_name, attn in channel_attn.items():
-            if attn is None or attn.numel() == 0:
-                continue
-            for i in range(attn.shape[0]):
-                vals, idxs = torch.topk(attn[i], k=min(5, attn.shape[1]))
-                item = self.block_label(i)
-                item["channel"] = channel_name
-                item["top"] = [{"cell": int(j), "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
-                attention_channels_by_stage.append(item)
-
         def top_attn_items(attn, i: int, k: int = 4) -> List[Dict[str, float]]:
             if attn is None or attn.numel() == 0 or i >= attn.shape[0]:
                 return []
@@ -1818,7 +1807,12 @@ class SeqAccumulator:
         route_attn = self.route_attention / c if self.route_attention is not None else torch.zeros(self.chain_depth, self.blocks_per_layer + 2)
         route_usage_by_block = []
         for i in range(route_attn.shape[0]):
-            layer = i // max(1, self.blocks_per_layer)
+            if 0 <= int(i) < len(self.flat_to_layer_block):
+                layer, _block = self.flat_to_layer_block[int(i)]
+            else:
+                layer = int(i) // max(1, self.blocks_per_layer)
+            prev_layer = int(layer) - 1
+            prev_blocks = self.topology_plan[prev_layer] if 0 <= prev_layer < len(self.topology_plan) else list(range(self.blocks_per_layer))
             vals, idxs = torch.topk(route_attn[i], k=min(5, route_attn.shape[1]))
             route_items = []
             for v, j in zip(vals.tolist(), idxs.tolist()):
@@ -1828,9 +1822,13 @@ class SeqAccumulator:
                 elif jj == 1:
                     name = "GLOBAL_REGISTER_SKIP"
                 else:
-                    prev_block = jj - 2
-                    prev_layer = layer - 1
-                    name = f"INIT.B{prev_block}" if prev_layer < 0 else f"L{prev_layer}.B{prev_block}"
+                    route_pos = jj - 2
+                    if prev_layer < 0:
+                        name = f"INIT.B{route_pos}"
+                    elif 0 <= route_pos < len(prev_blocks):
+                        name = f"L{prev_layer}.B{int(prev_blocks[route_pos])}"
+                    else:
+                        name = f"L{prev_layer}.B?{route_pos}"
                 route_items.append({"route": jj, "name": name, "weight": float(v)})
             item = self.block_label(i)
             item["routes"] = route_items
@@ -2163,6 +2161,18 @@ def evaluate(model, loader, device: str, amp_dtype: torch.dtype, classes: List[s
         conf += torch.bincount(idx, minlength=C * C).view(C, C)
         acc.add(aux["seq"])
 
+    if prof is not None:
+        prof.__exit__(None, None, None)
+        try:
+            profile_dir = ensure_dir(Path(args.out_dir) / "profiles")
+            sort_key = "cuda_time_total" if device.startswith("cuda") else "cpu_time_total"
+            table = prof.key_averages().table(sort_by=sort_key, row_limit=40)
+            profile_path = profile_dir / f"profile_epoch_{int(epoch):03d}.txt"
+            profile_path.write_text(table, encoding="utf-8")
+            print(f"torch_profiler: wrote {profile_path}", flush=True)
+        except Exception as e:
+            print(f"torch_profiler: failed to export profile table: {e}", flush=True)
+
     return {
         "loss": total_loss / max(1, total),
         "acc": total_correct / max(1, total),
@@ -2312,6 +2322,12 @@ def train_one_epoch(model, loader, optimizer, scaler, device: str, amp_dtype: to
         t_opt1 = time.perf_counter()
         speed_opt += t_opt1 - t_opt0
         speed_count += 1
+        if prof is not None:
+            prof.step()
+            if int(getattr(args, "profile_steps", 0)) > 0 and step >= int(getattr(args, "profile_steps", 0)):
+                print(f"torch_profiler: reached profile_steps={int(getattr(args, 'profile_steps', 0))}; stopping epoch early", flush=True)
+                last_end = time.perf_counter()
+                break
         last_end = time.perf_counter()
 
         with torch.no_grad():
