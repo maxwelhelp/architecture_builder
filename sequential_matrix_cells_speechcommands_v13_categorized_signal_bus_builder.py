@@ -359,6 +359,7 @@ class SequentialMatrixCellsCore(nn.Module):
     """
 
     OP_NAMES = [
+        "noop", "identity", "keep_prev", "small_refine",
         "mlp", "matrix_mlp", "bilinear", "time", "freq", "delta", "short_onset", "offset",
         "global_summary", "memory_read", "memory_write", "ema_memory", "class_pair_memory", "residual_refdelta",
         "block_compare", "class_pair_contrast", "late_read_repair", "suppress", "normalize", "energy_count",
@@ -1044,7 +1045,11 @@ class SequentialMatrixCellsCore(nn.Module):
             u_energy = self.energy_count_out(torch.cat([prev_energy, ev_energy, mem_energy], dim=-1))
             offset_ctx = short_feat[:, -D:].unsqueeze(1).expand(-1, N, -1)
             u_offset = self.offset_out(torch.cat([h, ev_mix, offset_ctx, task_ctx, global_ctx], dim=-1))
-            candidates = torch.stack([u_mlp,u_matrix_mlp,u_bilin,u_time,u_freq,u_delta,u_short,u_offset,u_global,u_mem_read,u_mem_write,u_ema_memory,u_class_pair_memory,u_refdelta,u_compare,u_pair,u_late_read_repair,u_suppress,u_norm,u_energy], dim=2)
+            u_noop = torch.zeros_like(h)
+            u_identity = h
+            u_keep_prev = block_seed
+            u_small_refine = 0.10 * u_mlp
+            candidates = torch.stack([u_noop,u_identity,u_keep_prev,u_small_refine,u_mlp,u_matrix_mlp,u_bilin,u_time,u_freq,u_delta,u_short,u_offset,u_global,u_mem_read,u_mem_write,u_ema_memory,u_class_pair_memory,u_refdelta,u_compare,u_pair,u_late_read_repair,u_suppress,u_norm,u_energy], dim=2)
 
             # RolePlanner: layer role mix -> operator prior. SignalBus adds data/task/mechanism bias.
             role_logits = self.role_logits[layer].to(device=device, dtype=dtype).view(1, self.num_roles).expand(B, -1)
@@ -1084,6 +1089,16 @@ class SequentialMatrixCellsCore(nn.Module):
             primitive_gates = torch.softmax(primitive_logits, dim=-1).to(dtype)  # [B,N,Cat,O]
             op_gates = (category_gates.unsqueeze(-1) * primitive_gates).sum(dim=2)  # [B,N,O]
             op_gates = op_gates / op_gates.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+
+            def _op_mass(names: Tuple[str, ...]) -> torch.Tensor:
+                idxs = [self.OP_NAMES.index(nm) for nm in names if nm in self.OP_NAMES]
+                if not idxs:
+                    return torch.zeros(B, N, device=device, dtype=dtype)
+                return op_gates.index_select(-1, torch.tensor(idxs, device=device)).sum(dim=-1).clamp(0.0, 1.0)
+            safe_write_mass = _op_mass(("noop", "identity", "keep_prev"))
+            global_write_mass = _op_mass(("global_summary", "energy_count"))
+            mem_write_mass = _op_mass(("memory_write", "ema_memory", "class_pair_memory"))
+
             op_scale = 1.0 + 0.20 * torch.tanh(self.block_op_scale[layer, active_block_ids].to(device=device, dtype=dtype)).view(1,N,self.num_ops,1)
             candidates = candidates * op_scale
             update = torch.einsum('bno,bnod->bnd', op_gates, candidates)
@@ -1095,6 +1110,7 @@ class SequentialMatrixCellsCore(nn.Module):
             # write enough to actually transform/repair/aggregate, not only look pretty in op gates.
             phase_floor = self.gate_floor if layer == 0 else self.late_gate_floor
             eff_gate = phase_floor + (1.0 - phase_floor) * dyn_gate
+            eff_gate = eff_gate * (1.0 - 0.75 * safe_write_mass).clamp(0.10, 1.0)
             update_expand = update[:, :, None, :].expand(-1,-1,self.block_cells,-1)
             task_expand = task_ctx[:, :, None, :].expand(-1,-1,self.block_cells,-1)
             cell_in = torch.cat([prev_region_for_active, update_expand, task_expand], dim=-1)
@@ -1108,6 +1124,7 @@ class SequentialMatrixCellsCore(nn.Module):
             write_in = torch.cat([summaries, task_ctx, ev_mix], dim=-1)
             gw_val = self.global_write_val(write_in)
             gw_gate = 0.15 * torch.sigmoid(self.global_write_gate(write_in))
+            gw_gate = gw_gate * (0.05 + 0.95 * global_write_mass.unsqueeze(-1))
             gw_q = self.global_write_q(summaries)
             K_global2 = self.global_k(global_matrix)
             score_gw = torch.einsum('bnd,bgd->bng', gw_q, K_global2) * scale
@@ -1117,6 +1134,7 @@ class SequentialMatrixCellsCore(nn.Module):
 
             mw_val = self.memory_write_val(torch.cat([u_mem_write, task_ctx, ev_mix], dim=-1))
             mw_gate = 0.20 * torch.sigmoid(self.memory_write_gate(torch.cat([summaries, task_ctx, mem_ctx], dim=-1)))
+            mw_gate = mw_gate * (0.05 + 0.95 * mem_write_mass.unsqueeze(-1))
             mw_q = self.memory_write_q(summaries + u_mem_write)
             K_mem2 = self.memory_k(memory_matrix)
             score_mw = torch.einsum('bnd,bmd->bnm', mw_q, K_mem2) * scale
@@ -1439,6 +1457,10 @@ class SequentialMatrixCellsCore(nn.Module):
             sim = addr @ addr.T
             eye = torch.eye(sim.shape[0], device=sim.device, dtype=torch.bool)
             reg = reg + float(lambda_addr) * sim.masked_select(~eye).pow(2).mean()
+        if lambda_stage > 0:
+            terms = [q.float().pow(2).mean() for q in self.stage_gate_net.parameters()]
+            terms += [self.class_stage_bias.float().pow(2).mean(), self.class_layer_read_bias.float().pow(2).mean()]
+            reg = reg + float(lambda_stage) * torch.stack(terms).mean()
         return reg
 
 
@@ -2256,7 +2278,7 @@ def train_one_epoch(model, loader, optimizer, scaler, device: str, amp_dtype: to
             explore_w = max(0.0, 1.0 - train_progress / 0.45)
             sharpen_w = min(1.0, max(0.0, (train_progress - 0.25) / 0.55))
             lambda_operator_balance_eff = args.lambda_operator_balance * explore_w
-            lambda_operator_entropy_per_block_eff = args.lambda_operator_entropy_per_block * max(0.20, explore_w)
+            lambda_operator_entropy_per_block_eff = args.lambda_operator_entropy_per_block * max(0.05, explore_w)
             lambda_category_entropy_eff = args.lambda_category_entropy * sharpen_w
             loss = (
                 ce + reg
@@ -2821,7 +2843,7 @@ def build_argparser():
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--head-weight-decay", type=float, default=0.03)
     p.add_argument("--grad-clip", type=float, default=0.7)
-    p.add_argument("--amp", type=str, default="bf16", choices=["fp16", "bf16", "fp32", "off"])
+    p.add_argument("--amp", type=str, default="fp16", choices=["fp16", "bf16", "fp32", "off"])
     p.add_argument("--device", type=str, default="cuda")
     p.add_argument("--seed", type=int, default=42)
 
