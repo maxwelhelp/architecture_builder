@@ -8,6 +8,23 @@ This repository is used for fast experimental development, report publishing, an
 
 Build a differentiable matrix-program builder that can assemble useful neural-network substructures from roles, categories, primitives, matrix memories, and learned signals. The long-term direction is not a single fixed model, but a system that can search, compare, archive, and reuse good architecture fragments across tasks.
 
+## Core principle / root problem
+
+The main system problem is documented here:
+
+```text
+docs/DYNAMIC_PROGRAM_BUILDER_CORE.md
+```
+
+Short version:
+
+```text
+v13 is a useful fixed soft differentiable prototype, but the real system must become a dynamic program builder:
+StepPlanner + UtilityTracker + Grow/Prune/Replace Controller + SkillArchive.
+```
+
+If training plateaus or overfits, the first question should not be only "which lambda should change?". The first question should be whether the architecture can detect weak steps/blocks, add capacity only at real bottlenecks, prune useless branches, replace failed mini-programs, and archive reusable primitive-step skills.
+
 ## Current active lines
 
 ### 1. SpeechCommands matrix architecture
@@ -180,143 +197,3 @@ bash commands/push_latest_report.sh \
 ## Git sync rules
 
 Never delete local datasets/runs. These are intentionally ignored:
-
-```text
-data/
-runs/
-checkpoints/
-artifacts/
-```
-
-Safe sync when there are no uncommitted changes:
-
-```bash
-bash commands/sync_rebase_push.sh
-```
-
-Manual safe sync:
-
-```bash
-git status -sb
-git pull --rebase origin main
-git push origin main
-```
-
-Do not run this in a working experiment folder unless you fully understand the consequences:
-
-```bash
-git clean -fdx
-```
-
-It can delete ignored local datasets and runs.
-
-## P40 hardware notes
-
-Primary local GPU: Tesla P40 / Pascal.
-
-Prefer:
-
-```text
---amp fp16
-```
-
-Avoid using bf16 as default on P40. Triton is not a reliable default path for this GPU. First optimize with vectorized PyTorch; only then consider a small C++/CUDA extension for a proven bottleneck.
-
-Potential future CUDA targets:
-
-```text
-fused weighted operator sum
-fused write gate + residual update
-grouped MatrixMLP block mixer
-```
-
-## What to compare in reviews
-
-Primary task metrics:
-
-```text
-best_val_acc / score
-train vs val gap
-per-class confusion
-loss/CE trend
-```
-
-Architecture health metrics:
-
-```text
-rolediv
-catdiv
-catent
-phase
-routediv
-blkdiv
-latew
-ldyn
-weaklate
-sigop
-eff_gate / dyn_gate
-```
-
-Program reports:
-
-```text
-role_mix_by_layer
-category_mix_by_layer
-operator_program_by_block
-attention_channels_by_stage
-route_usage_by_block
-gate_write_by_block
-matrix_decomposition
-```
-
-Red flags:
-
-```text
-rolediv=0 for many epochs
-phase near 0
-latew=0 and ldyn=0 when memory/repair should be used
-train improves while val drops sharply
-operator program becomes soft soup forever
-```
-
-## Known baselines / context
-
-Old strong SpeechCommands lines included about 62-64% validation in several runs. A new v13/vNext run around 58-59% is a sanity pass, not yet a new best. It means the code works, but roles/phases/late-write may not be alive enough.
-
-Use `docs/VERSION_STATS.csv` for historical scores.
-
-## Agent review checklist
-
-When another agent reviews this repo, it should first read:
-
-```text
-README.md
-docs/MATRIX_PROGRAM_LOGIC_VNEXT.md
-docs/VERSION_STATS.csv
-src/matrix_program/README.md
-commands/run_v13_15ep.sh
-commands/push_latest_report.sh
-```
-
-Then inspect the latest report folder under `reports/`.
-
-Questions to answer in a review:
-
-1. Did task quality improve over the relevant baseline?
-2. Did the model assemble a meaningful program or just soft-mix everything?
-3. Are roles/phases/memory/write gates alive?
-4. Which primitives dominate, and are they logically matched to layer/block position?
-5. Are expensive primitives justified by score gain?
-6. What should be archived as a reusable architecture skill?
-
-## Development direction
-
-Immediate direction:
-
-```text
-1. Analyze v13_vnext_matrixmlp_15ep report.
-2. Run longer v13_vnext_matrixmlp_45ep with healthier role/phase/late-write settings.
-3. Test ShadowTopK on HF hidden-layer replacement.
-4. Add architecture_archive_v1 to save best and interesting-bad programs as soft priors.
-5. Move new code into src/matrix_program instead of patching the huge v13 file.
-```
