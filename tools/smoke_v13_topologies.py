@@ -6,14 +6,11 @@ from pathlib import Path
 
 import torch
 
-# When this script is executed as `python tools/smoke_v13_topologies.py`,
-# Python puts `tools/` on sys.path, not the repository root. Add the root
-# explicitly so the main v13 file can be imported reliably.
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from sequential_matrix_cells_speechcommands_v13_categorized_signal_bus_builder import (  # noqa: E402
+from sequential_matrix_cells_speechcommands_v13_categorized_signal_bus_builder import (
     SeqAccumulator,
     SequentialMatrixCellsCore,
 )
@@ -49,10 +46,28 @@ def main() -> None:
         acc.add(aux)
         s = acc.summary(classes)
         assert logits.shape == (2, len(classes)), logits.shape
-        assert len(s["operator_program_by_block"]) == m.chain_depth, (top, len(s["operator_program_by_block"]), m.chain_depth)
+        assert len(s["operator_program_by_block"]) == m.chain_depth, (
+            top,
+            len(s["operator_program_by_block"]),
+            m.chain_depth,
+        )
         assert "attention_channels_by_stage" in s, "missing attention_channels_by_stage"
-        assert len(s["gate_write_by_block"]) == m.chain_depth, (top, len(s["gate_write_by_block"]), m.chain_depth)
-        print(top, "OK", "logits", tuple(logits.shape), "chain_depth", m.chain_depth, "program_blocks", len(s["operator_program_by_block"]), flush=True)
+        assert len(s["gate_write_by_block"]) == m.chain_depth, (
+            top,
+            len(s["gate_write_by_block"]),
+            m.chain_depth,
+        )
+        print(
+            top,
+            "OK",
+            "logits",
+            tuple(logits.shape),
+            "chain_depth",
+            m.chain_depth,
+            "program_blocks",
+            len(s["operator_program_by_block"]),
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

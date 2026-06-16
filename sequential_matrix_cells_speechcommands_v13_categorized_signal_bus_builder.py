@@ -359,7 +359,7 @@ class SequentialMatrixCellsCore(nn.Module):
     """
 
     OP_NAMES = [
-        "mlp", "bilinear", "time", "freq", "delta", "short_onset", "offset",
+        "mlp", "matrix_mlp", "bilinear", "time", "freq", "delta", "short_onset", "offset",
         "global_summary", "memory_read", "memory_write", "ema_memory", "class_pair_memory", "residual_refdelta",
         "block_compare", "class_pair_contrast", "late_read_repair", "suppress", "normalize", "energy_count",
     ]
@@ -529,6 +529,12 @@ class SequentialMatrixCellsCore(nn.Module):
 
         # Shared operator bank. These are matrix-to-matrix row transforms, vectorized over blocks.
         self.mlp_op = nn.Sequential(nn.LayerNorm(dim * 5), nn.Linear(dim * 5, dim * 2), nn.GELU(), nn.Dropout(dropout), nn.Linear(dim * 2, dim))
+        # MatrixMLP primitive: unlike channel-only MLP, this mixes the active block axis
+        # through a learned block-to-block matrix and then applies a channel MLP.
+        self.matrix_mlp_q = nn.Linear(dim, dim, bias=False)
+        self.matrix_mlp_k = nn.Linear(dim, dim, bias=False)
+        self.matrix_mlp_v = nn.Linear(dim, dim, bias=False)
+        self.matrix_mlp_out = nn.Sequential(nn.LayerNorm(dim * 4), nn.Linear(dim * 4, dim * 2), nn.GELU(), nn.Dropout(dropout), nn.Linear(dim * 2, dim))
         self.bilin_h = nn.Linear(dim, dim, bias=False)
         self.bilin_e = nn.Linear(dim, dim, bias=False)
         self.bilin_t = nn.Linear(dim, dim, bias=True)
@@ -570,9 +576,9 @@ class SequentialMatrixCellsCore(nn.Module):
             if self.num_layers >= 1:
                 bump(0, ("time", "freq", "delta", "short_onset", "offset", "bilinear"), 0.28)
             if self.num_layers >= 2:
-                bump(1, ("block_compare", "class_pair_contrast", "residual_refdelta", "bilinear", "normalize"), 0.24)
+                bump(1, ("block_compare", "class_pair_contrast", "residual_refdelta", "bilinear", "matrix_mlp", "normalize"), 0.24)
             if self.num_layers >= 3:
-                bump(2, ("memory_read", "memory_write", "ema_memory", "class_pair_memory", "suppress", "normalize", "residual_refdelta", "late_read_repair"), 0.24)
+                bump(2, ("memory_read", "memory_write", "ema_memory", "class_pair_memory", "matrix_mlp", "suppress", "normalize", "residual_refdelta", "late_read_repair"), 0.24)
             if self.num_layers >= 4:
                 bump(3, ("global_summary", "energy_count", "suppress", "memory_write", "ema_memory", "block_compare"), 0.28)
 
@@ -601,7 +607,7 @@ class SequentialMatrixCellsCore(nn.Module):
                 if name in self.OP_NAMES:
                     phase_target[layer, self.OP_NAMES.index(name)] = 1.0
         target(0, ("time", "freq", "delta", "short_onset", "offset", "bilinear"))
-        target(1, ("block_compare", "class_pair_contrast", "residual_refdelta", "bilinear", "normalize"))
+        target(1, ("block_compare", "class_pair_contrast", "residual_refdelta", "bilinear", "matrix_mlp", "normalize"))
         target(2, ("memory_read", "memory_write", "ema_memory", "class_pair_memory", "suppress", "normalize", "residual_refdelta", "late_read_repair"))
         target(3, ("global_summary", "energy_count", "suppress", "memory_write", "ema_memory", "block_compare"))
         phase_target = phase_target / phase_target.sum(dim=-1, keepdim=True).clamp_min(1.0)
@@ -629,8 +635,8 @@ class SequentialMatrixCellsCore(nn.Module):
                     role_op[r, self.OP_NAMES.index(name)] = 1.0
         role_ops("extract", ("time", "freq", "delta", "short_onset", "offset", "bilinear"))
         role_ops("contrast", ("class_pair_contrast", "block_compare", "bilinear", "residual_refdelta", "normalize"))
-        role_ops("transform", ("bilinear", "normalize", "residual_refdelta", "time", "freq"))
-        role_ops("memory", ("memory_read", "memory_write", "ema_memory", "class_pair_memory", "residual_refdelta", "normalize"))
+        role_ops("transform", ("matrix_mlp", "bilinear", "normalize", "residual_refdelta", "time", "freq"))
+        role_ops("memory", ("memory_read", "memory_write", "ema_memory", "class_pair_memory", "matrix_mlp", "residual_refdelta", "normalize"))
         role_ops("repair", ("residual_refdelta", "suppress", "normalize", "class_pair_contrast", "late_read_repair", "class_pair_memory"))
         role_ops("aggregate", ("global_summary", "energy_count", "memory_write", "ema_memory", "suppress", "block_compare"))
         role_ops("suppress", ("suppress", "normalize", "block_compare", "global_summary"))
@@ -658,11 +664,11 @@ class SequentialMatrixCellsCore(nn.Module):
                     op_cat[c, self.OP_NAMES.index(name)] = 1.0
         category_ops("extract", ("time", "freq", "delta", "short_onset", "offset", "energy_count"))
         category_ops("compare", ("bilinear", "block_compare", "class_pair_contrast"))
-        category_ops("memory", ("memory_read", "memory_write", "ema_memory", "class_pair_memory", "global_summary"))
+        category_ops("memory", ("memory_read", "memory_write", "ema_memory", "class_pair_memory", "global_summary", "matrix_mlp"))
         category_ops("repair", ("residual_refdelta", "class_pair_contrast", "class_pair_memory", "late_read_repair", "suppress", "normalize"))
         category_ops("aggregate", ("global_summary", "energy_count", "memory_write", "ema_memory", "block_compare"))
         category_ops("suppress", ("suppress", "normalize", "block_compare"))
-        category_ops("transform", ("mlp", "bilinear", "normalize", "time", "freq", "offset", "residual_refdelta"))
+        category_ops("transform", ("mlp", "matrix_mlp", "bilinear", "normalize", "time", "freq", "offset", "residual_refdelta"))
         # Ensure every primitive is reachable.
         for oi in range(self.num_ops):
             if float(op_cat[:, oi].sum().item()) == 0.0:
@@ -933,7 +939,8 @@ class SequentialMatrixCellsCore(nn.Module):
             q_route = self.route_q(block_seed + addr + 0.10 * film)
             K_route = self.route_k(route_tokens); V_route = self.route_v(route_tokens)
             route_prior = self._route_prior_for_topology(layer, active_blocks, prev_active_blocks, device, dtype).view(1,N,-1)
-            A_route = torch.softmax(torch.einsum('bnd,brd->bnr', q_route, K_route) * scale + route_prior, dim=-1).to(dtype)
+            score_route = torch.einsum('bnd,brd->bnr', q_route, K_route) * scale + route_prior
+            A_route = torch.softmax(score_route.float(), dim=-1).to(dtype)
             route_ctx = torch.einsum('bnr,brd->bnd', A_route, V_route)
             h = route_ctx + 0.05 * film
             q_base = h + addr
@@ -945,38 +952,55 @@ class SequentialMatrixCellsCore(nn.Module):
 
             # Typed Evidence -> Mechanism heads.
             q_time = self.time_q(q_base + task_ctx + self.head_addr[self.HEAD_NAMES.index('time')].to(device=device, dtype=dtype).view(1,1,D))
-            A_time = torch.softmax(torch.einsum('bnd,btd->bnt', q_time, K_time) * (scale / max(1e-4,self.evidence_attn_temp)), dim=-1).to(dtype)
+            score_time = torch.einsum('bnd,btd->bnt', q_time, K_time) * (scale / max(1e-4,self.evidence_attn_temp))
+            A_time = torch.softmax(score_time.float(), dim=-1).to(dtype)
             time_ctx = torch.einsum('bnt,btd->bnd', A_time, V_time)
 
             q_freq = self.freq_q(q_base + task_ctx + self.head_addr[self.HEAD_NAMES.index('freq')].to(device=device, dtype=dtype).view(1,1,D))
-            A_freq = torch.softmax(torch.einsum('bnd,bfd->bnf', q_freq, K_freq) * (scale / max(1e-4,self.evidence_attn_temp)), dim=-1).to(dtype)
+            score_freq = torch.einsum('bnd,bfd->bnf', q_freq, K_freq) * (scale / max(1e-4,self.evidence_attn_temp))
+            A_freq = torch.softmax(score_freq.float(), dim=-1).to(dtype)
             freq_ctx = torch.einsum('bnf,bfd->bnd', A_freq, V_freq)
 
             q_onset = self.onset_q(q_base + task_ctx + self.head_addr[self.HEAD_NAMES.index('onset')].to(device=device, dtype=dtype).view(1,1,D))
-            A_onset = torch.softmax(torch.einsum('bnd,bsd->bns', q_onset, K_ev) * (scale / max(1e-4,self.evidence_attn_temp)), dim=-1).to(dtype)
+            score_onset = torch.einsum('bnd,bsd->bns', q_onset, K_ev) * (scale / max(1e-4,self.evidence_attn_temp))
+            A_onset = torch.softmax(score_onset.float(), dim=-1).to(dtype)
             onset_ctx = torch.einsum('bns,bsd->bnd', A_onset, V_ev)
 
             q_energy = self.energy_q(q_base + task_ctx + self.head_addr[self.HEAD_NAMES.index('energy')].to(device=device, dtype=dtype).view(1,1,D))
-            A_energy = torch.softmax(torch.einsum('bnd,bqd->bnq', q_energy, K_energy) * (scale / max(1e-4,self.evidence_attn_temp)), dim=-1).to(dtype)
+            score_energy = torch.einsum('bnd,bqd->bnq', q_energy, K_energy) * (scale / max(1e-4,self.evidence_attn_temp))
+            A_energy = torch.softmax(score_energy.float(), dim=-1).to(dtype)
             energy_ctx = torch.einsum('bnq,bqd->bnd', A_energy, V_energy)
 
             # Use average evidence attention for existing analyzer shape [B,N,E].
-            A_ev = 0.5 * A_onset + 0.5 * torch.softmax(torch.einsum('bnd,bsd->bns', q_base, K_ev) * scale, dim=-1).to(dtype)
+            score_ev_raw = torch.einsum('bnd,bsd->bns', q_base, K_ev) * scale
+            A_ev = 0.5 * A_onset + 0.5 * torch.softmax(score_ev_raw.float(), dim=-1).to(dtype)
             ev_mix = 0.30 * time_ctx + 0.30 * freq_ctx + 0.25 * onset_ctx + 0.15 * energy_ctx
 
             # Register reads.
             K_global = self.global_k(global_matrix); V_global = self.global_v(global_matrix)
             q_global = self.global_q(q_base + task_ctx)
-            A_global = torch.softmax(torch.einsum('bnd,bgd->bng', q_global, K_global) * scale, dim=-1).to(dtype)
+            score_global = torch.einsum('bnd,bgd->bng', q_global, K_global) * scale
+            A_global = torch.softmax(score_global.float(), dim=-1).to(dtype)
             global_ctx = torch.einsum('bng,bgd->bnd', A_global, V_global)
 
             K_mem = self.memory_k(memory_matrix); V_mem = self.memory_v(memory_matrix)
             q_mem = self.memory_q(q_base + task_ctx)
-            A_mem = torch.softmax(torch.einsum('bnd,bmd->bnm', q_mem, K_mem) * scale, dim=-1).to(dtype)
+            score_mem = torch.einsum('bnd,bmd->bnm', q_mem, K_mem) * scale
+            A_mem = torch.softmax(score_mem.float(), dim=-1).to(dtype)
             mem_ctx = torch.einsum('bnm,bmd->bnd', A_mem, V_mem)
 
             # Operator candidates.
             u_mlp = self.mlp_op(torch.cat([h, ev_mix, task_ctx, global_ctx, mem_ctx], dim=-1))
+            # MatrixMLP: block/state-axis mixer + channel mixer. It is still fully differentiable:
+            # early training gives gradient to all blocks/primitives; later entropy schedule can sharpen.
+            mm_src = block_seed + 0.50 * route_ctx + 0.25 * mem_ctx
+            mm_q = self.matrix_mlp_q(h + task_ctx)
+            mm_k = self.matrix_mlp_k(mm_src)
+            mm_v = self.matrix_mlp_v(mm_src)
+            mm_score = torch.einsum('bnd,bmd->bnm', mm_q, mm_k) * scale
+            mm_attn = torch.softmax(mm_score.float(), dim=-1).to(dtype)
+            mm_ctx = torch.einsum('bnm,bmd->bnd', mm_attn, mm_v)
+            u_matrix_mlp = self.matrix_mlp_out(torch.cat([h, mm_ctx, task_ctx, global_ctx + mem_ctx], dim=-1))
             u_bilin = self.bilin_out(self.bilin_h(h) * self.bilin_e(ev_mix) * torch.sigmoid(self.bilin_t(task_ctx)))
             u_time = time_ctx
             u_freq = freq_ctx
@@ -1020,7 +1044,7 @@ class SequentialMatrixCellsCore(nn.Module):
             u_energy = self.energy_count_out(torch.cat([prev_energy, ev_energy, mem_energy], dim=-1))
             offset_ctx = short_feat[:, -D:].unsqueeze(1).expand(-1, N, -1)
             u_offset = self.offset_out(torch.cat([h, ev_mix, offset_ctx, task_ctx, global_ctx], dim=-1))
-            candidates = torch.stack([u_mlp,u_bilin,u_time,u_freq,u_delta,u_short,u_offset,u_global,u_mem_read,u_mem_write,u_ema_memory,u_class_pair_memory,u_refdelta,u_compare,u_pair,u_late_read_repair,u_suppress,u_norm,u_energy], dim=2)
+            candidates = torch.stack([u_mlp,u_matrix_mlp,u_bilin,u_time,u_freq,u_delta,u_short,u_offset,u_global,u_mem_read,u_mem_write,u_ema_memory,u_class_pair_memory,u_refdelta,u_compare,u_pair,u_late_read_repair,u_suppress,u_norm,u_energy], dim=2)
 
             # RolePlanner: layer role mix -> operator prior. SignalBus adds data/task/mechanism bias.
             role_logits = self.role_logits[layer].to(device=device, dtype=dtype).view(1, self.num_roles).expand(B, -1)
@@ -1086,7 +1110,8 @@ class SequentialMatrixCellsCore(nn.Module):
             gw_gate = 0.15 * torch.sigmoid(self.global_write_gate(write_in))
             gw_q = self.global_write_q(summaries)
             K_global2 = self.global_k(global_matrix)
-            gw = torch.softmax(torch.einsum('bnd,bgd->bng', gw_q, K_global2) * scale, dim=-1).to(dtype)
+            score_gw = torch.einsum('bnd,bgd->bng', gw_q, K_global2) * scale
+            gw = torch.softmax(score_gw.float(), dim=-1).to(dtype)
             global_delta = torch.einsum('bng,bnd->bgd', gw * gw_gate, gw_val) / max(1,N)
             global_matrix = self.global_norm(global_matrix + global_delta)
 
@@ -1094,7 +1119,8 @@ class SequentialMatrixCellsCore(nn.Module):
             mw_gate = 0.20 * torch.sigmoid(self.memory_write_gate(torch.cat([summaries, task_ctx, mem_ctx], dim=-1)))
             mw_q = self.memory_write_q(summaries + u_mem_write)
             K_mem2 = self.memory_k(memory_matrix)
-            mw = torch.softmax(torch.einsum('bnd,bmd->bnm', mw_q, K_mem2) * scale, dim=-1).to(dtype)
+            score_mw = torch.einsum('bnd,bmd->bnm', mw_q, K_mem2) * scale
+            mw = torch.softmax(score_mw.float(), dim=-1).to(dtype)
             memory_delta = torch.einsum('bnm,bnd->bmd', mw * mw_gate, mw_val) / max(1,N)
             memory_matrix = self.memory_norm(memory_matrix + memory_delta)
 
@@ -1671,10 +1697,13 @@ class SeqAccumulator:
         if do_decomp:
             st = aux.stage_states.detach().float().cpu()  # [B,N+1,D], index0=base
             ev_attn_b = aux.evidence_attention.detach().float().cpu()  # [B,N,E]
-            for layer in range(self.num_layers):
-                s = layer * self.blocks_per_layer + 1
-                e = s + self.blocks_per_layer
-                if e <= st.shape[1]:
+            offset = 0
+            for layer, active_blocks in enumerate(self.topology_plan):
+                n = len(active_blocks)
+                s = offset + 1
+                e = s + n
+                offset += n
+                if n > 0 and e <= st.shape[1]:
                     x = st[:, s:e, :].reshape(-1, st.shape[-1])
                     x = x - x.mean(dim=0, keepdim=True)
                     try:
@@ -1762,6 +1791,23 @@ class SeqAccumulator:
                 item["top"] = [{"cell": int(j), "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
                 attention_channels_by_stage.append(item)
 
+        attention_channels_by_stage = []
+        for channel_name, attn in channel_attn.items():
+            if attn is None or attn.numel() == 0:
+                continue
+            for i in range(attn.shape[0]):
+                vals, idxs = torch.topk(attn[i], k=min(5, attn.shape[1]))
+                item = self.block_label(i)
+                item["channel"] = channel_name
+                item["top"] = [{"cell": int(j), "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
+                attention_channels_by_stage.append(item)
+
+        def top_attn_items(attn, i: int, k: int = 4) -> List[Dict[str, float]]:
+            if attn is None or attn.numel() == 0 or i >= attn.shape[0]:
+                return []
+            vals, idxs = torch.topk(attn[i], k=min(k, attn.shape[1]))
+            return [{"cell": int(j), "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
+
         top_task_by_stage = []
         for i in range(task_attn.shape[0]):
             vals, idxs = torch.topk(task_attn[i], k=min(8, task_attn.shape[1]))
@@ -1792,7 +1838,7 @@ class SeqAccumulator:
 
         op_gates = self.operator_gates / c if self.operator_gates is not None else torch.zeros(self.chain_depth, 5)
         op_names = [
-            "mlp", "bilinear", "time", "freq", "delta", "short_onset", "offset",
+            "mlp", "matrix_mlp", "bilinear", "time", "freq", "delta", "short_onset", "offset",
             "global_summary", "memory_read", "memory_write", "ema_memory", "class_pair_memory",
             "residual_refdelta", "block_compare", "class_pair_contrast", "late_read_repair", "suppress", "normalize", "energy_count",
         ]
@@ -1800,7 +1846,7 @@ class SeqAccumulator:
         for i in range(op_gates.shape[0]):
             vals, idxs = torch.topk(op_gates[i], k=min(5, op_gates.shape[1]))
             item = self.block_label(i)
-            item["ops"] = [{"op": op_names[int(j)], "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
+            item["ops"] = [{"op": op_names[int(j)] if int(j) < len(op_names) else f"op_{int(j)}", "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
             operator_gates_by_stage.append(item)
 
         class_reads = []
@@ -1882,7 +1928,7 @@ class SeqAccumulator:
         operator_program_by_block = []
         for i in range(op_gates.shape[0]):
             vals, idxs = torch.topk(op_gates[i], k=min(6, op_gates.shape[1]))
-            ops = [{"op": op_names[int(j)], "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
+            ops = [{"op": op_names[int(j)] if int(j) < len(op_names) else f"op_{int(j)}", "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
             ev_vals, ev_idxs = torch.topk(ev_attn[i], k=min(5, ev_attn.shape[1]))
             task_vals, task_idxs = torch.topk(task_attn[i], k=min(5, task_attn.shape[1]))
 
@@ -1900,13 +1946,7 @@ class SeqAccumulator:
                 "operator_program": ops,
                 "category_program": category_gates_by_stage[i]["categories"] if i < len(category_gates_by_stage) else [],
                 "evidence_patterns": [{"cell": int(j), "name": evidence_name(int(j)), "weight": float(v)} for v, j in zip(ev_vals.tolist(), ev_idxs.tolist())],
-                "attention_channel_patterns": {
-                    name: (
-                        [{"cell": int(j), "weight": float(v)} for v, j in zip(*[list(x) for x in torch.topk(attn[i], k=min(4, attn.shape[1]))])]
-                        if attn is not None and attn.numel() > 0 and i < attn.shape[0] else []
-                    )
-                    for name, attn in channel_attn.items()
-                },
+                "attention_channel_patterns": {name: top_attn_items(attn, i, 4) for name, attn in channel_attn.items()},
                 "task_patterns": [{"cell": int(j), "name": task_name(int(j)), "weight": float(v)} for v, j in zip(task_vals.tolist(), task_idxs.tolist())],
                 "top_classes_using_block": top_classes,
                 "effective_gate": float((self.effective_stage_gate / c)[i]) if self.effective_stage_gate is not None and i < self.effective_stage_gate.shape[0] else None,
@@ -1951,17 +1991,19 @@ class SeqAccumulator:
         matrix_decomposition = []
         rank_count = max(1, self.layer_rank_count)
         stage_norm_avg = self.stage_state_norm / c if self.stage_state_norm is not None else torch.zeros(self.chain_depth + 1)
-        for layer in range(self.num_layers):
+        offset = 0
+        for layer, active_blocks in enumerate(self.topology_plan):
             blocks = []
-            for block in range(self.blocks_per_layer):
-                flat = layer * self.blocks_per_layer + block
+            for local_i, block in enumerate(active_blocks):
+                flat = offset + local_i
                 read_idx = flat + 1
                 blocks.append({
                     "name": f"L{layer}.B{block}",
                     "stage": flat,
                     "state_norm": float(stage_norm_avg[read_idx]) if read_idx < len(stage_norm_avg) else 0.0,
-                    "attention_concentration_proxy": self.attn_corr_gap_sum[flat] / max(1, self.attn_corr_gap_count),
+                    "attention_concentration_proxy": self.attn_corr_gap_sum[flat] / max(1, self.attn_corr_gap_count) if flat < len(self.attn_corr_gap_sum) else 0.0,
                 })
+            offset += len(active_blocks)
             matrix_decomposition.append({
                 "layer": layer,
                 "effective_rank": self.layer_rank_sum[layer] / rank_count,
@@ -1986,9 +2028,9 @@ class SeqAccumulator:
         phase_role_diagnostics = []
         if op_gates.numel():
             offset = 0
-            for layer in range(self.num_layers):
-                n = self.blocks_per_layer
-                usage = op_gates[offset:offset+n, :].mean(dim=0) if offset + n <= op_gates.shape[0] else torch.zeros(op_gates.shape[1])
+            for layer, active_blocks in enumerate(self.topology_plan):
+                n = len(active_blocks)
+                usage = op_gates[offset:offset+n, :].mean(dim=0) if n > 0 and offset + n <= op_gates.shape[0] else torch.zeros(op_gates.shape[1])
                 usage = usage / usage.sum().clamp_min(1e-8)
                 if layer == 0:
                     expected = {"time", "freq", "delta", "short_onset", "bilinear"}
@@ -2000,7 +2042,7 @@ class SeqAccumulator:
                     expected = {"global_summary", "energy_count", "memory_write", "suppress", "block_compare"}
                 match = sum(float(usage[j]) for j, name in enumerate(op_names) if name in expected)
                 vals, idxs = torch.topk(usage, k=min(5, usage.shape[0]))
-                top = [{"op": op_names[int(j)], "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
+                top = [{"op": op_names[int(j)] if int(j) < len(op_names) else f"op_{int(j)}", "weight": float(v)} for v, j in zip(vals.tolist(), idxs.tolist())]
                 phase_role_diagnostics.append({"layer": layer, "expected_ops": sorted(expected), "match_mass": match, "top_ops": top})
                 offset += n
 
@@ -2158,7 +2200,7 @@ def train_one_epoch(model, loader, optimizer, scaler, device: str, amp_dtype: to
     speed_bwd = 0.0
     speed_opt = 0.0
     speed_count = 0
-    acc = SeqAccumulator(num_classes=len(classes), evidence_cells=args.evidence_cells, chain_depth=args.chain_depth, num_layers=args.num_layers, blocks_per_layer=args.blocks_per_layer, decomp_every=args.decomp_every)
+    acc = SeqAccumulator(num_classes=len(classes), evidence_cells=args.evidence_cells, chain_depth=args.chain_depth, num_layers=args.num_layers, blocks_per_layer=args.blocks_per_layer, decomp_every=args.decomp_every, topology_plan=model.core.topology_plan)
 
     for step, (wav, y) in enumerate(loader, start=1):
         if args.max_train_batches and step > args.max_train_batches:
@@ -2197,19 +2239,28 @@ def train_one_epoch(model, loader, optimizer, scaler, device: str, amp_dtype: to
             role_anchor = aux["seq"].role_anchor_loss
             category_diversity = aux["seq"].category_diversity_loss
             category_entropy = aux["seq"].category_entropy_loss
+            # vNext schedule: early soft exploration, late sharper readable primitive program.
+            # This preserves gradient from all candidates early, then stops forcing every block to mix everything.
+            denom_epochs = max(1, int(getattr(args, "epochs", 1)) - 1)
+            train_progress = min(1.0, max(0.0, (float(epoch) - 1.0) / float(denom_epochs)))
+            explore_w = max(0.0, 1.0 - train_progress / 0.45)
+            sharpen_w = min(1.0, max(0.0, (train_progress - 0.25) / 0.55))
+            lambda_operator_balance_eff = args.lambda_operator_balance * explore_w
+            lambda_operator_entropy_per_block_eff = args.lambda_operator_entropy_per_block * max(0.20, explore_w)
+            lambda_category_entropy_eff = args.lambda_category_entropy * sharpen_w
             loss = (
                 ce + reg
                 + args.lambda_read_entropy * read_entropy
                 + args.lambda_read_diversity * read_div
                 + args.lambda_stage_load_balance * stage_lb
                 + args.lambda_evidence_source_balance * ev_lb
-                + args.lambda_operator_balance * op_lb
+                + lambda_operator_balance_eff * op_lb
                 # Deprecated aggregate register loss; default is 0.0 because
                 # global/memory diversity are controlled separately below.
                 + args.lambda_register_diversity * reg_div
                 + args.lambda_global_diversity * glob_div
                 + args.lambda_memory_diversity * mem_div
-                + args.lambda_operator_entropy_per_block * op_entropy_block
+                + lambda_operator_entropy_per_block_eff * op_entropy_block
                 + args.lambda_block_diversity * block_div
                 + args.lambda_route_diversity * route_div
                 + args.lambda_adapter_diversity * adapter_div
@@ -2221,7 +2272,7 @@ def train_one_epoch(model, loader, optimizer, scaler, device: str, amp_dtype: to
                 + args.lambda_role_diversity * role_diversity
                 + args.lambda_role_anchor * role_anchor
                 + args.lambda_category_diversity * category_diversity
-                + args.lambda_category_entropy * category_entropy
+                + lambda_category_entropy_eff * category_entropy
             )
 
         if getattr(args, "speed_sync", False) and device.startswith("cuda"):
