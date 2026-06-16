@@ -33,7 +33,25 @@ Already present:
 
 This means v13 is a real differentiable matrix assembly, not just a pretty report.
 
-## Current gaps
+## v13 vNext patch policy
+
+The safe patch path is:
+
+```bash
+bash commands/apply_v13_vnext_matrix_mlp_patch_and_smoke.sh
+```
+
+This applies:
+
+- correctness/stability patch
+- live role regularization path
+- fp32 softmax for fp16/P40
+- attention channel reports
+- topology smoke tests
+- MatrixMLP primitive
+- entropy/balance schedule
+
+## Current gaps and fixes
 
 ### 1. Too much soft soup
 
@@ -41,20 +59,22 @@ All operator candidates are computed and softly mixed. This is good early in tra
 
 ```text
 early: soft all-operator exploration
-middle: top-k / sparse primitive selection
-late: hard-ish top-2/top-3 program
+middle: weaker balance/entropy pressure
+late: sharper category/primitive program
 export: fixed program, do not compute all candidates
 ```
 
-Otherwise blocks may become:
+The vNext patch adds an entropy/balance schedule in `train_one_epoch`:
 
 ```text
-0.12 mlp + 0.09 memory + 0.07 repair + ...
+operator_balance: high early, decays later
+operator_entropy_per_block: high early, weaker later
+category_entropy: near-zero early, active later for sharper categories
 ```
 
-which can work but is less readable and less transferable.
+This keeps gradient flowing through all candidates first, then prevents the final report from becoming “every block does a little bit of everything”.
 
-### 2. Step hierarchy is missing in v13
+### 2. Step hierarchy is still missing in v13
 
 A block should not only select one primitive mixture. It should be able to execute several ordered steps:
 
@@ -68,16 +88,18 @@ S3: write useful state / aggregate
 Planned structure:
 
 ```text
-LayerPlanner   -> phase: extract / compare / memory / repair / aggregate
-BlockPlanner   -> block role
-StepPlanner    -> ordered step roles
-PrimitivePlanner -> top-k primitives inside the step
-WritePlanner   -> how much to write and where
+LayerPlanner      -> phase: extract / compare / memory / repair / aggregate
+BlockPlanner      -> block role
+StepPlanner       -> ordered step roles
+PrimitivePlanner  -> top-k primitives inside the step
+WritePlanner      -> how much to write and where
 ```
+
+This is not in the v13 patch yet. It is the main v14 task.
 
 ### 3. Step embeddings are needed
 
-Add later:
+Add in v14:
 
 ```python
 self.step_addr = nn.Parameter(torch.randn(max_steps, dim) * 0.04)
@@ -100,9 +122,9 @@ Every writable block/step needs safe options:
 - keep_prev
 - small_refine
 
-Without this, a block can damage state simply because the architecture forces it to write.
+Without this, a block can damage state simply because the architecture forces it to write. This is v14 work.
 
-### 5. MatrixMLP should replace plain per-block MLP as a stronger primitive
+### 5. MatrixMLP is added as a separate primitive
 
 Plain MLP is mostly channel-wise:
 
@@ -110,22 +132,15 @@ Plain MLP is mostly channel-wise:
 [B, N, D] -> [B, N, D]
 ```
 
-MatrixMLP should mix both block/state axis and channel axis:
+The vNext patch adds `matrix_mlp` as a new operator candidate, not a replacement for `mlp`. It mixes both block/state axis and channel axis:
 
 ```text
-X = A_blocks @ X
-X = X @ W_channels
-Y = gate * update + residual
+mm_score = Q(h) @ K(block_seed + route_ctx + memory_ctx)^T
+mm_ctx   = softmax(mm_score) @ V(block_seed + route_ctx + memory_ctx)
+Y        = MatrixMLPOut([h, mm_ctx, task_ctx, global_ctx + mem_ctx])
 ```
 
-Useful variants:
-
-- low-rank block mixer
-- butterfly / structured mixer
-- block-diagonal channel mixer
-- gated residual MatrixMLP
-
-This is still matrix-native and can be made faster than attention for small block counts.
+This is still matrix-native and can be optimized later through grouped block/state mixers.
 
 ## Implementation order
 
@@ -139,13 +154,18 @@ This is still matrix-native and can be made faster than attention for small bloc
    - keep v2.2/v2.4 quality-first behavior
    - do not reintroduce cost/skill/alive until quality is stable
 
-3. v14 architecture:
-   - add StepPlanner + step embeddings
-   - add MatrixMLP candidate
-   - add noop/keep_prev primitive
-   - add late top-k primitive selection schedule
+3. v13 vNext patch:
+   - MatrixMLP candidate
+   - entropy/balance schedule
+   - preserve soft-gradient exploration at the start
 
-4. Efficiency:
+4. v14 architecture:
+   - StepPlanner + step embeddings
+   - noop/keep_prev/small_refine primitive
+   - per-step report
+   - late top-k primitive execution/export
+
+5. Efficiency:
    - profile after correctness
    - vectorize/group operator candidates
    - only then consider custom CUDA for P40
