@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODEL_NAME="${UNIVERSAL_MODEL:-google/bert_uncased_L-2_H-128_A-2}"
+
+python experiments/universal_program/run_universal_matrix_program_v2_5b_scheduled_cost.py \
+  --model-name "$MODEL_NAME" \
+  --layer-idx 0 \
+  --device cuda \
+  --amp bf16 \
+  --seq-len 64 \
+  --targets block,delta,norm \
+  --evidence-cells 40 \
+  --task-cells 12 \
+  --memory-cells 6 \
+  --global-cells 3 \
+  --init-layers 4 \
+  --max-layers 8 \
+  --init-blocks-per-layer 4 \
+  --max-blocks-per-layer 8 \
+  --init-steps-per-block 1 \
+  --max-steps-per-block 4 \
+  --max-primitives 24 \
+  --category-temp 1.4 \
+  --primitive-temp 1.2 \
+  --batch-size 64 \
+  --eval-batch-size 128 \
+  --steps-per-epoch 120 \
+  --val-steps 20 \
+  --epochs 45 \
+  --lr 7e-4 \
+  --weight-decay 0.01 \
+  --grad-clip 0.7 \
+  --lambda-cos 0.25 \
+  --controller-min-delta 0.0015 \
+  --controller-patience 2 \
+  --rollback-patience 1 \
+  --pending-epochs 2 \
+  --weak-action-reward 0.00025 \
+  --cleanup-start-frac 0.62 \
+  --late-growth-start-frac 0.70 \
+  --late-growth-penalty 0.45 \
+  --descriptor-action-boost 0.15 \
+  --soft-prune-strength 0.30 \
+  --alive-init-logit 2.2 \
+  --alive-floor 0.05 \
+  --lambda-op-cost 0.0015 \
+  --lambda-alive-sparsity 0.0003 \
+  --cost-start-frac 0.50 \
+  --cost-end-frac 0.85 \
+  --alive-start-frac 0.55 \
+  --alive-end-frac 0.90 \
+  --lambda-semantic-diversity 0.010 \
+  --semantic-start-frac 0.25 \
+  --semantic-end-frac 0.70 \
+  --min-semantic-mass 0.22 \
+  --max-residual-only-ratio 0.78 \
+  --candidate-primitive-cost 0.85 \
+  --out-dir ./runs/universal_matrix_program_v2_5b_scheduled_cost_hf_45ep
