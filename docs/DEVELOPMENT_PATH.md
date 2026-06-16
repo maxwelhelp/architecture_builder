@@ -70,9 +70,14 @@ program collapsed toward identity + residual_repair
 score dropped to about 0.12619
 ```
 
-## v2.5b purpose
+### v2.5b scheduled cost
 
-Keep the good part of v2.5, but prevent cheap-program collapse.
+Purpose:
+
+```text
+keep v2.5 forward-level self-optimization
+but prevent cheap identity/residual-only collapse
+```
 
 Changes:
 
@@ -94,7 +99,47 @@ cost/alive remain measurable
 late add_width/add_depth reduced
 ```
 
-## Success criteria for v2.5b
+### v2.6 loss-driven skills
+
+Purpose:
+
+```text
+turn skills/semantic/category consistency into real losses,
+not only table/controller diagnostics
+```
+
+Important correction:
+
+```text
+semantic and skill losses must be computed on trainable priors/logits,
+not only on detached report tensors
+```
+
+Implemented signals:
+
+```text
+skill_loss:
+  nudges op_prior/cat_prior toward reusable skill motifs from skills/skill_bank.jsonl
+
+semantic_loss:
+  prevents identity/residual-only collapse by requiring useful semantic op mass
+
+category_consistency_loss:
+  aligns cat_prior with compatible primitive families
+
+scheduled cost/alive:
+  keeps v2.5 self-optimization but weaker and later
+```
+
+Skill is not just a checkpoint:
+
+```text
+symbolic skill = step/op/category pattern
+prior skill = weak op_prior/cat_prior target
+weight skill = optional compatible weights, not committed to repo
+```
+
+## Success criteria for v2.6
 
 Good run if:
 
@@ -103,18 +148,20 @@ score >= 0.1285
 block_cos >= 0.9752
 delta_cos >= 0.9320
 norm_cos >= 0.9886
-semantic_mass >= 0.18
-residual_only_ratio <= 0.82
-late add_width/add_depth mostly absent after epoch 35
+semantic_mass >= 0.20
+residual_only_ratio <= 0.80
+skill_loss decreases
+category consistency improves
 program_pseudocode is richer than identity/residual only
+late add_width/add_depth mostly absent after epoch 35
 ```
 
-## Next after v2.5b
+## Next after v2.6
 
-If v2.5b works:
+If v2.6 works:
 
 ```text
-v2.6 baseline comparison
+v2.7 baseline comparison
 ```
 
 Compare against:
@@ -124,21 +171,43 @@ linear
 low-rank linear
 small MLP
 tiny attention block
-matrix program v2.5b
+matrix program v2.6
 ```
 
-If v2.5b still collapses:
+If v2.6 still collapses:
 
 ```text
 reduce cost more
-increase semantic diversity only late
+reduce skill loss if it over-forces old motifs
+increase semantic diversity only after early quality is stable
 make stage-aware primitive cost inside core
 ```
 
-If v2.5b is stable:
+If v2.6 is stable:
 
 ```text
 add MemoryKV primitive
 add ablation trace exporter
-start skill-prior cold-start experiment
+start skill-prior cold-start experiment on another model/task
+build program compiler for fast runtime
+```
+
+## Safe workflow
+
+Before starting a new run:
+
+```bash
+git status -sb
+git pull --rebase
+```
+
+After a run:
+
+```bash
+python tools/export_program_pseudocode.py RUN/analysis_epoch_045.json --out RUN/program_pseudocode.md
+python tools/extract_skill_candidates.py RUN/program_pseudocode.md --source-run RUN_NAME --out ./skills/skill_bank.jsonl
+bash commands/push_latest_report.sh RUN RUN_NAME "Add RUN_NAME report"
+git add skills tools docs commands experiments
+git commit -m "Add RUN_NAME skills" || true
+git push
 ```
