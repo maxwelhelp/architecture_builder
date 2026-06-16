@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from src.matrix_program.gradient_signals import slot_gradient_health  # noqa: E402
+from src.matrix_program.matrix_losses import MatrixLossConfig, matrix_aux_losses  # noqa: E402
 from src.matrix_program.parallel_core import ParallelSlotConfig, ParallelSlotCore  # noqa: E402
 
 
@@ -55,6 +56,14 @@ def run(args):
         dropout=args.dropout,
         temperature=args.temperature,
     )
+    matrix_cfg = MatrixLossConfig(
+        lambda_write_budget=args.lambda_write_budget,
+        write_target=args.write_target,
+        lambda_op_entropy_floor=args.lambda_op_entropy_floor,
+        op_min_entropy=args.op_min_entropy,
+        lambda_op_usage_balance=args.lambda_op_usage_balance,
+        lambda_slot_diversity=args.lambda_slot_diversity,
+    )
     core = ParallelSlotCore(cfg).to(device)
     head = nn.Linear(args.dim, args.classes).to(device)
     opt = torch.optim.AdamW(list(core.parameters()) + list(head.parameters()), lr=args.lr, weight_decay=0.01)
@@ -76,7 +85,9 @@ def run(args):
             if args.grad_health:
                 h.retain_grad()
             logits = head(core.readout(h))
-            loss = F.cross_entropy(logits, y)
+            ce_loss = F.cross_entropy(logits, y)
+            matrix_loss, matrix_logs = matrix_aux_losses(h, aux, matrix_cfg)
+            loss = ce_loss + matrix_loss
             sync_if_cuda(device); t_fwd = time.perf_counter()
 
             opt.zero_grad(set_to_none=True)
@@ -94,19 +105,27 @@ def run(args):
             acc = (logits.argmax(dim=-1) == y).float().mean().item()
             wg = aux.get("write_gate")
             ow = aux.get("op_weights")
+            upd = aux.get("update_norm")
             mem_alloc_mb = torch.cuda.max_memory_allocated() / (1024 * 1024) if str(device).startswith("cuda") and torch.cuda.is_available() else 0.0
             row = {
                 "step": step,
                 "loss": float(loss.item()),
+                "ce_loss": float(ce_loss.item()),
+                "matrix_aux_loss": float(matrix_loss.detach().item()),
                 "acc": float(acc),
                 "write_gate_mean": float(wg.mean().item()) if wg is not None else None,
+                "write_gate_min": float(wg.min().item()) if wg is not None else None,
+                "write_gate_max": float(wg.max().item()) if wg is not None else None,
                 "op_entropy": float((-(ow.clamp_min(1e-8) * ow.clamp_min(1e-8).log()).sum(dim=-1).mean()).item()) if ow is not None else None,
+                "update_norm_mean": float(upd.mean().item()) if upd is not None else None,
+                "update_norm_max": float(upd.max().item()) if upd is not None else None,
                 "data_ms": (t_data - t0) * 1000.0,
                 "fwd_ms": (t_fwd - t_data) * 1000.0,
                 "bwd_ms": (t_bwd - t_fwd) * 1000.0,
                 "opt_ms": (t_opt - t_bwd) * 1000.0,
                 "step_ms": (t_opt - t0) * 1000.0,
                 "max_cuda_mem_mb": float(mem_alloc_mb),
+                **matrix_logs,
                 **grad_health,
             }
             rows.append(row)
@@ -128,9 +147,14 @@ def run(args):
         "mean_opt_ms": sum(r["opt_ms"] for r in tail) / max(1, len(tail)),
         "max_cuda_mem_mb": max([r["max_cuda_mem_mb"] for r in rows], default=0.0),
     }
-    if args.grad_health:
-        for k in ["grad_slot_norm_mean", "grad_slot_norm_max", "grad_layer_entropy", "grad_block_entropy", "grad_dead_slot_frac"]:
-            speed_summary[f"mean_{k}"] = sum(float(r.get(k, 0.0)) for r in tail) / max(1, len(tail))
+    for k in [
+        "matrix_aux_loss", "loss_write_budget", "loss_op_entropy_floor", "loss_op_usage_balance", "loss_slot_diversity",
+        "write_gate_mean", "op_entropy", "update_norm_mean",
+        "grad_slot_norm_mean", "grad_slot_norm_max", "grad_layer_entropy", "grad_block_entropy", "grad_dead_slot_frac",
+    ]:
+        vals = [float(r[k]) for r in tail if r.get(k) is not None]
+        if vals:
+            speed_summary[f"mean_{k}"] = sum(vals) / len(vals)
     summary = {"args": vars(args), "rows": rows[-20:], "speed_summary": speed_summary}
     (out / "probe_report.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print("done", out / "probe_report.json")
@@ -157,6 +181,12 @@ def parser():
     p.add_argument("--lr", type=float, default=5e-4)
     p.add_argument("--log-every", type=int, default=20)
     p.add_argument("--speed-tail", type=int, default=30)
+    p.add_argument("--lambda-write-budget", type=float, default=0.0)
+    p.add_argument("--write-target", type=float, default=0.70)
+    p.add_argument("--lambda-op-entropy-floor", type=float, default=0.0)
+    p.add_argument("--op-min-entropy", type=float, default=0.35)
+    p.add_argument("--lambda-op-usage-balance", type=float, default=0.0)
+    p.add_argument("--lambda-slot-diversity", type=float, default=0.0)
     p.add_argument("--grad-health", action="store_true")
     p.add_argument("--torch-profiler", action="store_true")
     p.add_argument("--profile-wait", type=int, default=5)
