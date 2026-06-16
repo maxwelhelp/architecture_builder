@@ -114,7 +114,15 @@ class ParallelSlotCore(nn.Module):
         update, weights = dense_topk_weighted_sum(candidates, scores, self.cfg.topk, temperature=self.cfg.temperature, warmup_all=warmup_all)
         gate = torch.sigmoid(self.write_gate(torch.cat([h, update], dim=-1)))
         h2 = self.norm(h + gate * self.drop(update))
-        aux = {"op_scores": scores.detach(), "op_weights": weights.detach(), "write_gate": gate.detach()}
+        aux = {
+            "op_scores": scores.detach(),
+            "op_weights": weights.detach(),
+            "write_gate": gate.detach(),
+            "op_scores_live": scores,
+            "op_weights_live": weights,
+            "write_gate_live": gate,
+            "update_norm": update.detach().float().pow(2).sum(dim=-1).sqrt(),
+        }
         return h2, aux
 
     def forward(self, x: torch.Tensor, *, warmup_all: bool = False) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -127,6 +135,9 @@ class ParallelSlotCore(nn.Module):
             gates = []
             weights = []
             scores = []
+            gates_live = []
+            weights_live = []
+            scores_live = []
             cur = h
             for li in range(self.cfg.layers):
                 updated, a = self._update_once(cur, warmup_all=warmup_all)
@@ -136,18 +147,32 @@ class ParallelSlotCore(nn.Module):
                 gates.append(a["write_gate"][:, li:li + 1])
                 weights.append(a["op_weights"][:, li:li + 1])
                 scores.append(a["op_scores"][:, li:li + 1])
+                gates_live.append(a["write_gate_live"][:, li:li + 1])
+                weights_live.append(a["op_weights_live"][:, li:li + 1])
+                scores_live.append(a["op_scores_live"][:, li:li + 1])
             h = cur
             aux["sequential_write_mean"] = torch.stack(outs).detach()
             aux["write_gate"] = torch.cat(gates, dim=1).detach()
             aux["op_weights"] = torch.cat(weights, dim=1).detach()
             aux["op_scores"] = torch.cat(scores, dim=1).detach()
+            aux["write_gate_live"] = torch.cat(gates_live, dim=1)
+            aux["op_weights_live"] = torch.cat(weights_live, dim=1)
+            aux["op_scores_live"] = torch.cat(scores_live, dim=1)
         elif mode == "hybrid_groups":
             mid = max(1, self.cfg.layers // 2)
             h1, a1 = self._update_once(h, warmup_all=warmup_all)
             h = torch.cat([h1[:, :mid], h[:, mid:]], dim=1)
             h2, a2 = self._update_once(h, warmup_all=warmup_all)
             h = torch.cat([h[:, :mid], h2[:, mid:]], dim=1)
-            aux.update({"op_weights": a2["op_weights"], "write_gate": a2["write_gate"], "op_scores": a2["op_scores"]})
+            aux.update({
+                "op_weights": a2["op_weights"],
+                "write_gate": a2["write_gate"],
+                "op_scores": a2["op_scores"],
+                "op_weights_live": a2["op_weights_live"],
+                "write_gate_live": a2["write_gate_live"],
+                "op_scores_live": a2["op_scores_live"],
+                "update_norm": a2["update_norm"],
+            })
         else:
             for _ in range(max(1, int(self.cfg.refine_iters))):
                 h, aux = self._update_once(h, warmup_all=warmup_all)
