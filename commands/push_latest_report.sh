@@ -4,6 +4,11 @@ set -euo pipefail
 RUN_DIR="${1:-./runs/v13_categorized_signal_bus_builder_15ep}"
 NAME="${2:-$(basename "$RUN_DIR")}" 
 MSG="${3:-Add $NAME report}"
+BRANCH="$(git branch --show-current)"
+if [[ -z "$BRANCH" ]]; then
+  echo "ERROR: detached HEAD. Resolve rebase/checkout branch before publishing report." >&2
+  exit 1
+fi
 
 bash commands/publish_latest_report.sh "$RUN_DIR" "$NAME"
 
@@ -17,18 +22,20 @@ if [[ -n "$heavy_staged" ]]; then
 fi
 
 # Stage only safe project/report files. Some directories may not exist yet.
-git add reports docs README.md .gitignore commands tools old src || true
+git add reports docs README.md .gitignore commands tools old src experiments || true
 if [[ -d skills ]]; then
   git add skills || true
 fi
 
 if git diff --cached --quiet; then
-  echo "Nothing new to commit. Running git push anyway in case local commits are ahead."
-  git push
-  exit 0
+  echo "Nothing new to commit. Will still sync/push local commits if branch is ahead."
+else
+  git commit -m "$MSG"
 fi
 
-git commit -m "$MSG"
-git push
+# Avoid the common 'fetch first' push rejection by rebasing after local commit.
+# If there is a real conflict, Git will stop and tell the user which file to resolve.
+git pull --rebase origin "$BRANCH"
+git push origin "$BRANCH"
 
 echo "Pushed report: $NAME"
