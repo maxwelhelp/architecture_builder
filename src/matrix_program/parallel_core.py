@@ -120,25 +120,34 @@ class ParallelSlotCore(nn.Module):
     def forward(self, x: torch.Tensor, *, warmup_all: bool = False) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         h = self.init_slots(x)
         mode = self.cfg.mode
-        aux = {}
+        aux: Dict[str, torch.Tensor] = {}
         if mode == "sequential_exact":
             # Still uses slots, but updates layers one at a time for a sequential baseline.
             outs = []
+            gates = []
+            weights = []
+            scores = []
             cur = h
             for li in range(self.cfg.layers):
                 updated, a = self._update_once(cur, warmup_all=warmup_all)
                 cur = cur.clone()
                 cur[:, li:li + 1] = updated[:, li:li + 1]
                 outs.append(a["write_gate"][:, li].mean())
+                gates.append(a["write_gate"][:, li:li + 1])
+                weights.append(a["op_weights"][:, li:li + 1])
+                scores.append(a["op_scores"][:, li:li + 1])
             h = cur
             aux["sequential_write_mean"] = torch.stack(outs).detach()
+            aux["write_gate"] = torch.cat(gates, dim=1).detach()
+            aux["op_weights"] = torch.cat(weights, dim=1).detach()
+            aux["op_scores"] = torch.cat(scores, dim=1).detach()
         elif mode == "hybrid_groups":
             mid = max(1, self.cfg.layers // 2)
             h1, a1 = self._update_once(h, warmup_all=warmup_all)
             h = torch.cat([h1[:, :mid], h[:, mid:]], dim=1)
             h2, a2 = self._update_once(h, warmup_all=warmup_all)
             h = torch.cat([h[:, :mid], h2[:, mid:]], dim=1)
-            aux.update({"op_weights": a2["op_weights"], "write_gate": a2["write_gate"]})
+            aux.update({"op_weights": a2["op_weights"], "write_gate": a2["write_gate"], "op_scores": a2["op_scores"]})
         else:
             for _ in range(max(1, int(self.cfg.refine_iters))):
                 h, aux = self._update_once(h, warmup_all=warmup_all)
