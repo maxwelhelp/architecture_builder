@@ -1,0 +1,23 @@
+python experiments/step_program/run_step_program_speechcommands_v1.py \
+  --data-root ./data/speechcommands \
+  --device cuda \
+  --amp fp16 \
+  --classes yes,no,up,down,left,right,on,off,stop,go \
+  --train-limit 12000 \
+  --val-limit 2000 \
+  --batch-size 128 \
+  --eval-batch-size 256 \
+  --workers 4 \
+  --dim 128 \
+  --evidence-cells 48 \
+  --layers 4 \
+  --blocks 4 \
+  --steps 4 \
+  --primitive-slots 3 \
+  --global-cells 3 \
+  --memory-cells 6 \
+  --lr 7e-4 \
+  --grad-clip 0.7 \
+  --epochs 10 \
+  --log-every 50 \
+  --out-dir ./runs/step_program_v1_speechcommands
