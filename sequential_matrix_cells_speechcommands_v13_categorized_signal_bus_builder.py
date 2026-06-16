@@ -2192,6 +2192,18 @@ def evaluate(model, loader, device: str, amp_dtype: torch.dtype, classes: List[s
         conf += torch.bincount(idx, minlength=C * C).view(C, C)
         acc.add(aux["seq"])
 
+    if prof is not None:
+        prof.__exit__(None, None, None)
+        try:
+            profile_dir = ensure_dir(Path(args.out_dir) / "profiles")
+            sort_key = "cuda_time_total" if device.startswith("cuda") else "cpu_time_total"
+            table = prof.key_averages().table(sort_by=sort_key, row_limit=40)
+            profile_path = profile_dir / f"profile_epoch_{int(epoch):03d}.txt"
+            profile_path.write_text(table, encoding="utf-8")
+            print(f"torch_profiler: wrote {profile_path}", flush=True)
+        except Exception as e:
+            print(f"torch_profiler: failed to export profile table: {e}", flush=True)
+
     return {
         "loss": total_loss / max(1, total),
         "acc": total_correct / max(1, total),
