@@ -33,10 +33,6 @@ def last_existing(pattern_dir: Path, prefix: str) -> Path | None:
     return files[-1] if files else None
 
 
-def metric_series(rows: List[Dict[str, Any]], key: str) -> List[float]:
-    return [f(r.get(key)) for r in rows if r.get(key) not in (None, "")]
-
-
 def top_confusions(analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
     return analysis.get("top_confusions", [])[:8]
 
@@ -56,14 +52,17 @@ def diagnose(rows: List[Dict[str, Any]], analysis: Dict[str, Any]) -> Dict[str, 
     val_loss = f(last.get("val_loss"))
     train_loss = f(last.get("train_loss"))
     logit_norm = f(last.get("logits_cell_norm", last.get("logit_norm")))
-    rolediv = f(last.get("role_diversity", last.get("rolediv")))
-    phase = f(last.get("phase_role", last.get("phase")))
-    latew = f(last.get("late_write", last.get("latew")))
-    ldyn = f(last.get("late_dyn_gate", last.get("ldyn")))
-    routediv = f(last.get("route_diversity", last.get("routediv")))
-    blkdiv = f(last.get("block_diversity", last.get("blkdiv")))
-    catdiv = f(last.get("category_diversity", last.get("catdiv")))
-    catent = f(last.get("category_entropy", last.get("catent")))
+
+    # These are mostly loss/proxy values printed by v13, not raw activation strengths.
+    # Near-zero can mean the regularizer is satisfied, not necessarily that the component is dead.
+    rolediv_loss = f(last.get("role_diversity", last.get("rolediv")))
+    phase_loss = f(last.get("phase_role", last.get("phase")))
+    latew_loss = f(last.get("late_write", last.get("latew")))
+    ldyn_loss = f(last.get("late_dyn_gate", last.get("ldyn")))
+    routediv_loss = f(last.get("route_diversity", last.get("routediv")))
+    blkdiv_loss = f(last.get("block_diversity", last.get("blkdiv")))
+    catdiv_loss = f(last.get("category_diversity", last.get("catdiv")))
+    catent_loss = f(last.get("category_entropy", last.get("catent")))
     sigop = f(last.get("signal_op_bias_norm", last.get("sigop")))
 
     issues: List[Dict[str, Any]] = []
@@ -71,25 +70,15 @@ def diagnose(rows: List[Dict[str, Any]], analysis: Dict[str, Any]) -> Dict[str, 
         issues.append({"level": level, "item": item, "why": why, "fix": fix})
 
     if train_acc - last_acc > 18:
-        add("HIGH", "overfit_or_confidence_gap", f"train_acc {train_acc:.2f}% vs val_acc {last_acc:.2f}%", "lower LR/weight decay schedule, add confidence/logit penalty, keep best checkpoint/early stop")
+        add("HIGH", "train_val_gap", f"train_acc {train_acc:.2f}% vs val_acc {last_acc:.2f}%", "use stronger confidence/head regularization, keep best checkpoint, and avoid interpreting last-epoch loss as quality")
     if val_loss > train_loss * 2.5:
-        add("MED", "val_loss_high", f"train_loss {train_loss:.4f}, val_loss {val_loss:.4f}", "reduce overconfidence and check class confusions")
+        add("MED", "val_loss_high", f"train_loss {train_loss:.4f}, val_loss {val_loss:.4f}", "reduce overconfidence; inspect persistent class confusions")
     if logit_norm > 10:
-        add("HIGH", "logit_norm_saturation", f"logit_norm {logit_norm:.2f}", "add/enable logit norm penalty or lower head LR; monitor confidence")
-    if rolediv <= 1e-4:
-        add("HIGH", "role_planner_dead_or_collapsed", f"role_diversity {rolediv:.6f}", "force/seed role priors, weaken category dominance, add per-layer role health loss")
-    if phase < 0.05:
-        add("HIGH", "phase_program_dead", f"phase_role {phase:.4f}", "add StepPlanner or stronger phase anchors; log phase per layer/block")
-    if latew <= 1e-4 and ldyn <= 1e-4:
-        add("HIGH", "late_write_dead", f"late_write {latew:.6f}, late_dyn {ldyn:.6f}", "add safe primitives/noop and make late-write target affect live gates; log per-block write")
-    if routediv < 0.05:
-        add("MED", "route_collapse", f"route_diversity {routediv:.4f}", "increase/extend route diversity schedule or use top-k route exploration")
-    if blkdiv < 0.05:
-        add("MED", "block_collapse", f"block_diversity {blkdiv:.4f}", "add block role/step diversity or anti-collapse only before late sharpening")
-    if catdiv > 0.85 and catent < 0.15:
-        add("OK", "categories_are_alive", f"catdiv {catdiv:.3f}, catent {catent:.3f}", "keep category planner; do not over-penalize it")
+        add("HIGH", "logit_norm_saturation", f"logit_norm {logit_norm:.2f}", "lower head LR or raise head weight decay; add logit/confidence penalty in v14")
     if sigop > 8:
-        add("MED", "operator_signal_strong", f"sigop {sigop:.2f}", "check if operator prior dominates learned roles; add per-op contribution report")
+        add("MED", "operator_signal_strong", f"sigop {sigop:.2f}", "check whether signal-op prior dominates learned role/step choices")
+    if catdiv_loss > 0.80 and catent_loss < 0.20:
+        add("INFO", "sharp_category_program", f"catdiv_loss {catdiv_loss:.3f}, catent_loss {catent_loss:.3f}", "categories are sharp; inspect actual category_mix_by_layer before changing loss")
 
     seq = analysis.get("seq_space", {}) if analysis else {}
     gate = seq.get("effective_stage_gate") or []
@@ -97,11 +86,29 @@ def diagnose(rows: List[Dict[str, Any]], analysis: Dict[str, Any]) -> Dict[str, 
     if gate:
         gm = mean([f(x) for x in gate])
         if gm > 0.95:
-            add("HIGH", "stage_gates_saturated", f"mean effective_stage_gate {gm:.3f}", "add keep/noop primitives; reduce gate floors; add write budget or gate entropy")
+            add("HIGH", "stage_gates_saturated", f"mean effective_stage_gate {gm:.3f}", "add safe noop/keep_prev/small_refine primitives, reduce stage_gate_bias_init/gate_floor, add write-budget logging")
+    else:
+        gm = None
     if dyn:
         dm = mean([f(x) for x in dyn])
+        if dm > 0.95:
+            add("HIGH", "dynamic_gates_saturated", f"mean dynamic_stage_gate {dm:.3f}", "reduce late floors and add explicit write/no-write choices")
     else:
-        dm = 0.0
+        dm = None
+
+    # Raw program/report fields. Their presence is more important than scalar losses.
+    program = seq.get("operator_program_by_block", [])
+    role_mix = seq.get("role_mix_by_layer", [])
+    cat_mix = seq.get("category_mix_by_layer", [])
+    route_usage = seq.get("route_usage_by_block", [])
+    attention_channels = seq.get("attention_channels_by_stage", [])
+
+    if not program:
+        add("HIGH", "missing_operator_program_report", "operator_program_by_block is missing", "run with fixed report code and publish seq_analysis")
+    if not role_mix:
+        add("MED", "missing_role_mix_report", "role_mix_by_layer is missing", "add/report role mix per layer before judging role health")
+    if not attention_channels:
+        add("MED", "missing_attention_channel_report", "attention_channels_by_stage is missing", "apply v13 report/profiler fixes before next report")
 
     return {
         "ok": True,
@@ -109,20 +116,24 @@ def diagnose(rows: List[Dict[str, Any]], analysis: Dict[str, Any]) -> Dict[str, 
         "last": {
             "epoch": int(f(last.get("epoch"))), "train_acc": train_acc, "val_acc": last_acc,
             "train_loss": train_loss, "val_loss": val_loss, "logit_norm": logit_norm,
-            "rolediv": rolediv, "phase": phase, "latew": latew, "ldyn": ldyn,
-            "routediv": routediv, "blkdiv": blkdiv, "catdiv": catdiv, "catent": catent, "sigop": sigop,
-            "mean_effective_gate": mean([f(x) for x in gate]) if gate else None,
-            "mean_dynamic_gate": dm if dyn else None,
+            "rolediv_loss": rolediv_loss, "phase_loss": phase_loss, "latew_loss": latew_loss, "ldyn_loss": ldyn_loss,
+            "routediv_loss": routediv_loss, "blkdiv_loss": blkdiv_loss, "catdiv_loss": catdiv_loss, "catent_loss": catent_loss, "sigop": sigop,
+            "mean_effective_gate": gm,
+            "mean_dynamic_gate": dm,
+            "program_blocks": len(program),
+            "role_layers": len(role_mix),
+            "category_layers": len(cat_mix),
+            "route_blocks": len(route_usage),
+            "attention_channel_items": len(attention_channels),
         },
         "issues": issues,
         "top_confusions": top_confusions(analysis),
+        "note": "Printed rolediv/phase/latew/etc are loss/proxy values. Use detailed seq_space fields to judge actual component usage.",
     }
 
 
 def write_md(path: Path, report: Dict[str, Any]) -> None:
-    lines = []
-    lines.append("# v13 health diagnosis")
-    lines.append("")
+    lines = ["# v13 health diagnosis", ""]
     if not report.get("ok"):
         lines.append(f"Not OK: {report.get('reason')}")
         path.write_text("\n".join(lines), encoding="utf-8")
@@ -131,11 +142,15 @@ def write_md(path: Path, report: Dict[str, Any]) -> None:
     lines.append(f"Best val: **{best['val_acc']:.2f}% @ epoch {best['epoch']}**")
     lines.append(f"Last val: **{last['val_acc']:.2f}%**, train: **{last['train_acc']:.2f}%**")
     lines.append("")
+    lines.append("> Note: `rolediv/phase/latew/routediv/blkdiv/...` are loss/proxy values, not direct component activity. Near-zero can mean the regularizer is satisfied.")
+    lines.append("")
     lines.append("## Last epoch health")
-    for k in ["train_loss", "val_loss", "logit_norm", "rolediv", "phase", "latew", "ldyn", "routediv", "blkdiv", "catdiv", "catent", "sigop", "mean_effective_gate", "mean_dynamic_gate"]:
+    for k in ["train_loss", "val_loss", "logit_norm", "rolediv_loss", "phase_loss", "latew_loss", "ldyn_loss", "routediv_loss", "blkdiv_loss", "catdiv_loss", "catent_loss", "sigop", "mean_effective_gate", "mean_dynamic_gate", "program_blocks", "role_layers", "category_layers", "route_blocks", "attention_channel_items"]:
         v = last.get(k)
-        if v is not None:
+        if isinstance(v, float):
             lines.append(f"- `{k}`: `{v:.6g}`")
+        elif v is not None:
+            lines.append(f"- `{k}`: `{v}`")
     lines.append("")
     lines.append("## Issues / blockers")
     for it in report.get("issues", []):
@@ -146,9 +161,9 @@ def write_md(path: Path, report: Dict[str, Any]) -> None:
         lines.append(f"- true `{c.get('true')}` → pred `{c.get('pred')}`: n={c.get('n')} rate={c.get('rate_of_true')}")
     lines.append("")
     lines.append("## Next-version recommendation")
-    lines.append("- Keep the run as a strong baseline if best >= 64%.")
-    lines.append("- Do not over-focus on more epochs; main blockers are role/phase/late-write collapse and gate saturation.")
-    lines.append("- Next version should add safe no-op/keep primitives, per-block health logging, and StepPlanner/ShadowTopK rather than only changing LR.")
+    lines.append("- Keep this as a strong baseline if best >= 64%.")
+    lines.append("- Main risk is saturated writes/logits and train-val gap, not necessarily missing role gradients.")
+    lines.append("- Next architecture fix should add safe no-op/keep primitives, per-block health logging, and StepPlanner/ShadowTopK.")
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
