@@ -1,6 +1,6 @@
 # v13_review_fixed_45ep_tuned
 
-Source run: `runs/v13_review_fixed_45ep_tuned`
+Source run: `./runs/v13_review_fixed_45ep_tuned`
 
 Included:
 - `probe_report.json`
