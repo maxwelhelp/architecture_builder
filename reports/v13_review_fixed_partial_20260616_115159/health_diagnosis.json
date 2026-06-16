@@ -1,0 +1,90 @@
+{
+  "ok": true,
+  "best": {
+    "epoch": 19,
+    "val_acc": 0.5975
+  },
+  "last": {
+    "epoch": 20,
+    "train_acc": 0.6526377688172043,
+    "val_acc": 0.5925,
+    "train_loss": 0.9728399085742171,
+    "val_loss": 1.1705258207321168,
+    "logit_norm": 8.029135704040527,
+    "rolediv_loss": 0.0,
+    "phase_loss": 0.16539357975125313,
+    "latew_loss": 0.0,
+    "ldyn_loss": 0.0,
+    "routediv_loss": 0.35046255216002464,
+    "blkdiv_loss": 0.18402798287570477,
+    "catdiv_loss": 0.830368734896183,
+    "catent_loss": 0.3523643724620342,
+    "sigop": 11.380586624145508,
+    "mean_effective_gate": 0.7845728993415833,
+    "mean_dynamic_gate": 0.7985845394432545,
+    "program_blocks": 16,
+    "role_layers": 4,
+    "category_layers": 4,
+    "route_blocks": 16,
+    "attention_channel_items": 96
+  },
+  "issues": [
+    {
+      "level": "MED",
+      "item": "operator_signal_strong",
+      "why": "sigop 11.38",
+      "fix": "check whether signal-op prior dominates learned role/step choices"
+    }
+  ],
+  "top_confusions": [
+    {
+      "true": "down",
+      "pred": "on",
+      "n": 45,
+      "rate_of_true": 0.2102803738317757
+    },
+    {
+      "true": "no",
+      "pred": "go",
+      "n": 40,
+      "rate_of_true": 0.18018018018018017
+    },
+    {
+      "true": "left",
+      "pred": "off",
+      "n": 31,
+      "rate_of_true": 0.1657754010695187
+    },
+    {
+      "true": "go",
+      "pred": "up",
+      "n": 31,
+      "rate_of_true": 0.16145833333333334
+    },
+    {
+      "true": "left",
+      "pred": "right",
+      "n": 30,
+      "rate_of_true": 0.16042780748663102
+    },
+    {
+      "true": "right",
+      "pred": "left",
+      "n": 26,
+      "rate_of_true": 0.13756613756613756
+    },
+    {
+      "true": "on",
+      "pred": "up",
+      "n": 27,
+      "rate_of_true": 0.13106796116504854
+    },
+    {
+      "true": "down",
+      "pred": "up",
+      "n": 27,
+      "rate_of_true": 0.1261682242990654
+    }
+  ],
+  "note": "Printed rolediv/phase/latew/etc are loss/proxy values. Use detailed seq_space fields to judge actual component usage."
+}
