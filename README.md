@@ -196,4 +196,12 @@ bash commands/push_latest_report.sh \
 
 ## Git sync rules
 
-Never delete local datasets/runs. These are intentionally ignored:
+Never delete local datasets or local run outputs from git cleanup commands. Heavy local data and checkpoints are intentionally kept outside normal report commits.
+
+Before editing from another machine, run:
+
+```bash
+git pull --rebase
+```
+
+Before publishing run summaries, use the report publishing command instead of manually staging full local run directories.
