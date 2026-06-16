@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+python tools/patch_v13_review_fixes_min.py
+python -m py_compile sequential_matrix_cells_speechcommands_v13_categorized_signal_bus_builder.py
+PYTHONPATH="$PWD" python tools/smoke_v13_topologies.py
+
+echo "OK: v13 review fixes applied and smoke-tested."
+echo "Next: git diff -- sequential_matrix_cells_speechcommands_v13_categorized_signal_bus_builder.py | head -240"
